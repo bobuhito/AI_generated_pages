@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Exact Sine-Wave Fit Through Five Points</title>
+<style>
+  :root {
+    --bg:#f4f6fa; --panel:#ffffff; --ink:#1b2333; --muted:#667085; --line:#e2e6ee;
+    --grid:#eceff5; --axis:#b7bfce; --canvas:#ffffff; --chip:#eef2fb;
+    --accent:#2f5be0; --wave:#e0245e; --ok:#12804a; --bad:#c42b2b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0f131a; --panel:#171c26; --ink:#e8ecf4; --muted:#9aa5b8; --line:#283042;
+      --grid:#1f2634; --axis:#46536b; --canvas:#121722; --chip:#202a3f;
+      --accent:#7ba0ff; --wave:#ff5c8a; --ok:#4cd08a; --bad:#ff8080;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .app { max-width:1280px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  h2 { font-size:12px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.07em;
+       color:var(--muted); font-weight:650; }
+  .sub { margin:0 0 8px; color:var(--muted); max-width:95ch; }
+  .eq { margin:0 0 16px; padding:8px 12px; background:var(--panel); border:1px solid var(--line);
+        border-radius:10px; display:inline-block; }
+  code, .mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px; }
+  .layout { display:grid; grid-template-columns:350px minmax(0,1fr); gap:16px; align-items:start; }
+  @media (max-width:920px) { .layout { grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+          padding:14px; margin-bottom:14px; }
+  .row { display:grid; grid-template-columns:18px 1fr 1fr; gap:8px; align-items:center; margin-bottom:7px; }
+  .wrow { display:grid; grid-template-columns:1fr 130px; gap:8px; align-items:center; margin-bottom:7px; }
+  .fld { display:flex; align-items:center; gap:6px; }
+  .fld > span { color:var(--muted); min-width:16px; font-size:12px; }
+  input[type=number] { width:100%; min-width:0; padding:6px 8px; border:1px solid var(--line);
+        border-radius:8px; background:var(--canvas); color:var(--ink); font:inherit;
+        font-variant-numeric:tabular-nums; }
+  input:focus-visible, button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .dot { width:14px; height:14px; border-radius:50%; box-shadow:0 0 0 2px var(--panel), 0 0 0 3px var(--line); }
+  button { font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--chip);
+           color:var(--ink); padding:7px 11px; border-radius:8px; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  .btns { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .chk { display:flex; align-items:center; gap:8px; margin:12px 0 4px; color:var(--muted); }
+  .muted { color:var(--muted); }
+  .sols { list-style:none; margin:10px 0 0; padding:0; display:flex; flex-direction:column;
+          gap:5px; max-height:250px; overflow:auto; }
+  .sols button { width:100%; text-align:left; display:flex; gap:8px; align-items:baseline;
+                 padding:6px 9px; font-size:12.5px; }
+  .sols button.sel { border-color:var(--accent); background:var(--chip); box-shadow:inset 3px 0 0 var(--accent); }
+  .sols .tag { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--accent); font-weight:700; }
+  #plot { display:block; width:100%; aspect-ratio:1/1; max-height:78vh; border-radius:8px;
+          background:var(--canvas); touch-action:none; cursor:default; }
+  #land { display:block; width:100%; height:300px; border-radius:8px; background:var(--canvas); }
+  #status { margin-top:10px; display:flex; flex-direction:column; gap:4px; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:99px; font-weight:650; font-size:12px;
+           border:1px solid currentColor; margin-right:6px; }
+  .badge.ok { color:var(--ok); } .badge.bad { color:var(--bad); }
+  .hint { margin:8px 0 0; color:var(--muted); font-size:12.5px; }
+  details.card summary { cursor:pointer; font-weight:600; }
+  details.card p { color:var(--muted); margin:8px 0 0; }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>Exact directional sine-wave fit through five points</h1>
+  <p class="sub">A rotated sine wave has five unknowns: amplitude <i>A</i>, wavelength <i>λ</i>, phase <i>φ</i>,
+    offset <i>C</i> and propagation angle <i>θ</i>. Five points therefore give a determined system with isolated exact
+    solutions. The <b>smoothest</b> solution is the one with the longest wavelength.</p>
+  <p class="eq mono">u = x·cosθ + y·sinθ &nbsp;&nbsp; v = −x·sinθ + y·cosθ &nbsp;&nbsp; <b>v = A·sin(2π·u/λ + φ) + C</b></p>
+
+  <div class="layout">
+    <aside>
+      <div class="card">
+        <h2>Points</h2>
+        <div id="pointRows"></div>
+        <div class="btns"><button id="btnRandPts">Randomize points</button></div>
+        <p class="hint">You can also drag the points on the plot.</p>
+      </div>
+
+      <div class="card">
+        <h2>Sine wave</h2>
+        <div id="waveRows"></div>
+        <div class="btns">
+          <button id="btnRandWave">Randomize wave</button>
+          <button id="btnPlace" title="Replace the five points by points sampled from the current wave">Put points on wave</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Solver</h2>
+        <div class="btns" style="margin-top:0"><button id="btnSolve" class="primary">Find smoothest exact fit</button></div>
+        <label class="chk"><input type="checkbox" id="chkAuto" checked> Auto-solve when the points change</label>
+        <div id="solInfo" class="muted"></div>
+        <ol id="solList" class="sols"></ol>
+      </div>
+    </aside>
+
+    <section>
+      <div class="card">
+        <canvas id="plot"></canvas>
+        <div id="status"></div>
+      </div>
+
+      <div class="card">
+        <h2>Search landscape</h2>
+        <canvas id="land"></canvas>
+        <p class="hint">Brighter = smaller leftover error once the best (A cosφ, A sinφ, C) has been fitted for that
+          wavelength and angle. Rings mark the exact solutions, the isolated points where that error is exactly zero
+          (the bright streaks are near misses). Click an entry in the solution list to move the white ring. The top of
+          the chart is λ = ∞, a parabola.</p>
+      </div>
+
+      <details class="card">
+        <summary>How the solver works</summary>
+        <p>For a fixed wavelength and angle the five equations are linear in (A·cosφ, A·sinφ, C), which leaves two
+          constraints that generally fail. Scanning (λ, θ) therefore turns the problem into finding the zeros of a
+          two-dimensional error function. The page evaluates that error on a grid, takes every local minimum as a seed,
+          polishes each seed with Levenberg–Marquardt on all five unknowns, keeps the roots whose error is below 1e-9
+          (in units of the points' span), and sorts them by wavelength. The longest wavelength is the smoothest
+          solution. The search starts at λ = ∞ and widens to shorter wavelengths only if nothing is found.</p>
+      </details>
+    </section>
+  </div>
+</div>
+
+<script>
+(function () {
+'use strict';
+
+/* ==== SOLVER START ==== */
+const PI = Math.PI, TWO_PI = 2 * Math.PI, N = 5;
+
+/* Stable special functions: with x = k*u,
+   S = sin(ku)/k = u*sinc(x),  Q = (1-cos(ku))/k^2 = 0.5*u^2*sinc(x/2)^2   (both finite at k = 0) */
+function sinc(x) {
+  if (Math.abs(x) < 1e-4) { const x2 = x * x; return 1 - x2 / 6 + x2 * x2 / 120; }
+  return Math.sin(x) / x;
+}
+function sincPrime(x) {
+  if (Math.abs(x) < 0.05) { const x2 = x * x; return x * (-1 / 3 + x2 * (1 / 30 - x2 / 840)); }
+  return (x * Math.cos(x) - Math.sin(x)) / (x * x);
+}
+function hPrime(x) {                       // derivative of (1-cos x)/x^2
+  if (Math.abs(x) < 0.05) { const x2 = x * x; return x * (-1 / 12 + x2 * (1 / 180 - x2 / 6720)); }
+  return (x * Math.sin(x) - 2 * (1 - Math.cos(x))) / (x * x * x);
+}
+
+function solveLinear(A, b, n) {            // Gaussian elimination, partial pivoting
+  const M = A.map((row, i) => row.slice(0, n).concat([b[i]]));
+  for (let c = 0; c < n; c++) {
+    let piv = c, best = Math.abs(M[c][c]);
+    for (let r = c + 1; r < n; r++) { const a = Math.abs(M[r][c]); if (a > best) { best = a; piv = r; } }
+    if (!(best > 1e-300)) return null;
+    if (piv !== c) { const t = M[c]; M[c] = M[piv]; M[piv] = t; }
+    for (let r = c + 1; r < n; r++) {
+      const f = M[r][c] / M[c][c];
+      if (f !== 0) for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  const x = new Array(n);
+  for (let r = n - 1; r >= 0; r--) {
+    let s = M[r][n];
+    for (let k = r + 1; k < n; k++) s -= M[r][k] * x[k];
+    x[r] = s / M[r][r];
+  }
+  return x;
+}
+
+function normalizePts(pts) {
+  let cx = 0, cy = 0;
+  for (const p of pts) { cx += p.x; cy += p.y; }
+  cx /= N; cy /= N;
+  let L = 0;
+  for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++)
+    L = Math.max(L, Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y));
+  if (!(L > 1e-12) || !isFinite(L)) return null;
+  const X = new Float64Array(N), Y = new Float64Array(N);
+  for (let i = 0; i < N; i++) { X[i] = (pts[i].x - cx) / L; Y[i] = (pts[i].y - cy) / L; }
+  return { X, Y, cx, cy, L };
+}
+
+function collinearInfo(pts, L) {
+  let bi = 0, bj = 1, best = -1;
+  for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+    const d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
+    if (d > best) { best = d; bi = i; bj = j; }
+  }
+  const dx = (pts[bj].x - pts[bi].x) / best, dy = (pts[bj].y - pts[bi].y) / best;
+  let maxPerp = 0;
+  for (const p of pts) maxPerp = Math.max(maxPerp, Math.abs((p.x - pts[bi].x) * dy - (p.y - pts[bi].y) * dx));
+  if (maxPerp < 1e-9 * L) {
+    let th = Math.atan2(dy, dx);
+    if (th < 0) th += PI;
+    if (th >= PI) th -= PI;
+    return { thetaDeg: th * 180 / PI, C: -pts[bi].x * Math.sin(th) + pts[bi].y * Math.cos(th) };
+  }
+  return null;
+}
+
+/* Squared norm of the part of v that cannot be matched by c + a*S + b*Q (the "leftover error"). */
+function makeWork() { return { S: new Float64Array(N), Q: new Float64Array(N), r: new Float64Array(N) }; }
+function resid2(u, v, k, w) {
+  const S = w.S, Q = w.Q, r = w.r;
+  let mv = 0, mS = 0, mQ = 0;
+  for (let i = 0; i < N; i++) {
+    const x = k * u[i], s1 = sinc(x), h = sinc(0.5 * x);
+    S[i] = u[i] * s1;
+    Q[i] = 0.5 * u[i] * u[i] * h * h;
+    mv += v[i]; mS += S[i]; mQ += Q[i];
+  }
+  mv /= N; mS /= N; mQ /= N;
+  let nSS = 0;
+  for (let i = 0; i < N; i++) { r[i] = v[i] - mv; S[i] -= mS; Q[i] -= mQ; nSS += S[i] * S[i]; }
+  const nS = Math.sqrt(nSS);
+  if (nS > 1e-12) {
+    let d = 0;
+    for (let i = 0; i < N; i++) S[i] /= nS;
+    for (let i = 0; i < N; i++) d += r[i] * S[i];
+    for (let i = 0; i < N; i++) r[i] -= d * S[i];
+    for (let pass = 0; pass < 2; pass++) {
+      let q = 0;
+      for (let i = 0; i < N; i++) q += Q[i] * S[i];
+      for (let i = 0; i < N; i++) Q[i] -= q * S[i];
+    }
+  }
+  let nQQ = 0;
+  for (let i = 0; i < N; i++) nQQ += Q[i] * Q[i];
+  const nQ = Math.sqrt(nQQ);
+  if (nQ > 1e-12) {
+    let d = 0;
+    for (let i = 0; i < N; i++) Q[i] /= nQ;
+    for (let i = 0; i < N; i++) d += r[i] * Q[i];
+    for (let i = 0; i < N; i++) r[i] -= d * Q[i];
+  }
+  let s = 0;
+  for (let i = 0; i < N; i++) s += r[i] * r[i];
+  return s;
+}
+
+/* Error grid over wave number kappa (rows) and angle theta in [0, pi) (columns). Layout: R[it*nK + ik]. */
+function scanBand(X, Y, lo, hi, dk, nT, work) {
+  const nK = Math.round((hi - lo) / dk) + 1;
+  const R = new Float64Array(nT * nK);
+  const u = new Float64Array(N), v = new Float64Array(N);
+  for (let it = 0; it < nT; it++) {
+    const th = PI * it / nT, c = Math.cos(th), s = Math.sin(th);
+    for (let i = 0; i < N; i++) { u[i] = X[i] * c + Y[i] * s; v[i] = -X[i] * s + Y[i] * c; }
+    const base = it * nK;
+    for (let ik = 0; ik < nK; ik++) R[base + ik] = resid2(u, v, lo + ik * dk, work);
+  }
+  return { R, nK, nT, lo, dk, hi: lo + (nK - 1) * dk };
+}
+
+function findSeeds(G) {                    // 8-neighbour local minima (theta wraps around)
+  const { R, nK, nT } = G, seeds = [];
+  for (let it = 0; it < nT; it++) {
+    const itm = (it + nT - 1) % nT, itp = (it + 1) % nT;
+    for (let ik = 0; ik < nK; ik++) {
+      const val = R[it * nK + ik];
+      let isMin = true;
+      for (let dt = -1; dt <= 1 && isMin; dt++) {
+        const jt = dt < 0 ? itm : (dt > 0 ? itp : it);
+        for (let dk = -1; dk <= 1; dk++) {
+          if (dt === 0 && dk === 0) continue;
+          const jk = ik + dk;
+          if (jk < 0 || jk >= nK) continue;
+          if (R[jt * nK + jk] < val) { isMin = false; break; }
+        }
+      }
+      if (isMin) seeds.push({ ik, it, val });
+    }
+  }
+  return seeds;
+}
+
+/* Model in stable parameters p = [k, theta, c, alpha, beta]:  v = c + alpha*S + beta*Q */
+function modelFJ(p, X, Y, F, J) {
+  const k = p[0], th = p[1], c0 = p[2], al = p[3], be = p[4];
+  const ct = Math.cos(th), st = Math.sin(th);
+  for (let i = 0; i < N; i++) {
+    const u = X[i] * ct + Y[i] * st, v = -X[i] * st + Y[i] * ct;
+    const x = k * u, sx = sinc(x), hx = sinc(0.5 * x);
+    const S = u * sx, Q = 0.5 * u * u * hx * hx;
+    F[i] = c0 + al * S + be * Q - v;
+    if (J) {
+      const row = J[i];
+      row[0] = al * u * u * sincPrime(x) + be * u * u * u * hPrime(x);
+      row[1] = (al * Math.cos(x) + be * S) * v + u;
+      row[2] = 1; row[3] = S; row[4] = Q;
+    }
+  }
+}
+
+function initLinear(k, th, X, Y) {
+  const ct = Math.cos(th), st = Math.sin(th);
+  const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], b = [0, 0, 0];
+  for (let i = 0; i < N; i++) {
+    const u = X[i] * ct + Y[i] * st, v = -X[i] * st + Y[i] * ct;
+    const x = k * u, h = sinc(0.5 * x);
+    const col = [1, u * sinc(x), 0.5 * u * u * h * h];
+    for (let r = 0; r < 3; r++) { for (let c = 0; c < 3; c++) A[r][c] += col[r] * col[c]; b[r] += col[r] * v; }
+  }
+  const tr = A[0][0] + A[1][1] + A[2][2];
+  for (let r = 0; r < 3; r++) A[r][r] += 1e-12 * tr;
+  return solveLinear(A, b, 3);
+}
+
+function refine(k0, th0, X, Y, maxIter) {  // Levenberg-Marquardt on all five unknowns
+  const lin = initLinear(k0, th0, X, Y);
+  if (!lin) return null;
+  let p = [k0, th0, lin[0], lin[1], lin[2]];
+  const F = new Float64Array(N), F2 = new Float64Array(N);
+  const J = []; for (let i = 0; i < N; i++) J.push(new Float64Array(N));
+  modelFJ(p, X, Y, F, J);
+  let cost = 0; for (let i = 0; i < N; i++) cost += F[i] * F[i];
+  let lam = 1e-3;
+  for (let it = 0; it < maxIter && cost > 1e-30; it++) {
+    const A = [], g = [];
+    for (let a = 0; a < N; a++) {
+      A.push(new Array(N).fill(0)); g.push(0);
+      for (let i = 0; i < N; i++) g[a] += J[i][a] * F[i];
+    }
+    for (let a = 0; a < N; a++) for (let b = 0; b < N; b++) {
+      let s = 0; for (let i = 0; i < N; i++) s += J[i][a] * J[i][b];
+      A[a][b] = s;
+    }
+    let accepted = false, stepNorm = 0;
+    for (let t = 0; t < 14; t++) {
+      const Ad = A.map((row, a) => row.map((x, b) => (a === b ? x + lam * (x + 1e-12) : x)));
+      const d = solveLinear(Ad, g.map(x => -x), N);
+      if (!d) { lam *= 10; continue; }
+      const pn = p.map((x, a) => x + d[a]);
+      if (!pn.every(Number.isFinite) || Math.abs(pn[0]) > 1e4) { lam *= 5; continue; }
+      modelFJ(pn, X, Y, F2, null);
+      let c2 = 0; for (let i = 0; i < N; i++) c2 += F2[i] * F2[i];
+      if (c2 < cost) {
+        p = pn; cost = c2; lam = Math.max(lam * 0.2, 1e-14); accepted = true;
+        stepNorm = Math.sqrt(d.reduce((s, x) => s + x * x, 0));
+        break;
+      }
+      lam *= 5;
+    }
+    if (!accepted) break;
+    modelFJ(p, X, Y, F, J);
+    if (stepNorm < 1e-15) break;
+  }
+  return { p, cost };
+}
+
+/* Convert stable normalized parameters to the user-facing wave  v = A sin(2*pi*u/lambda + phi) + C. */
+function toWave(p, nrm) {
+  let k = Math.abs(p[0]);
+  if (k < 1e-7) k = 1e-7;
+  let th = p[1];
+  const m = Math.floor(th / PI);
+  th -= m * PI;
+  const c0 = p[2], al = p[3], be = p[4];
+  const a = al / k;
+  let b = -be / (k * k), C = c0 + be / (k * k);
+  if (m & 1) { b = -b; C = -C; }           // theta shifted by an odd multiple of pi flips (u, v)
+  const Ahat = Math.hypot(a, b), phihat = Math.atan2(b, a);
+  const L = nrm.L, kk = k / L;
+  const uc = nrm.cx * Math.cos(th) + nrm.cy * Math.sin(th);
+  const vc = -nrm.cx * Math.sin(th) + nrm.cy * Math.cos(th);
+  let phi = phihat - kk * uc;
+  phi = ((phi % TWO_PI) + TWO_PI) % TWO_PI;
+  return { k: kk, kappa: k, lambda: TWO_PI / kk, A: Ahat * L, phi, C: C * L + vc, thetaDeg: th * 180 / PI };
+}
+
+function waveErrors(w, pts) {
+  const th = w.theta * PI / 180, c = Math.cos(th), s = Math.sin(th), k = TWO_PI / w.lambda;
+  const errs = []; let max = 0;
+  for (const p of pts) {
+    const u = p.x * c + p.y * s, v = -p.x * s + p.y * c;
+    const e = v - (w.A * Math.sin(k * u + w.phi) + w.C);
+    errs.push(e); max = Math.max(max, Math.abs(e));
+  }
+  return { errs, max };
+}
+
+/* Bands of wave number kappa = 2*pi*L/lambda: [lo, hi, step, thetaSteps].  Later bands are only used
+   when nothing was found in the earlier (longer-wavelength) ones. */
+const BANDS = [[0, 20, 0.1, 480], [20, 50, 0.12, 1600], [50, 100, 0.12, 3200]];
+
+function solveSmoothest(pts, opts) {
+  const t0 = performance.now();
+  const bands = (opts && opts.bands) || BANDS;
+  const nrm = normalizePts(pts);
+  if (!nrm) return { solutions: [], land: null, L: 0, ms: 0, note: 'The points coincide, so there is no wave to fit.' };
+  const col = collinearInfo(pts, nrm.L);
+  if (col) {
+    return { solutions: [{ k: 0, kappa: 0, lambda: Infinity, A: 0, phi: 0, C: col.C, thetaDeg: col.thetaDeg, degenerate: true }],
+             land: null, L: nrm.L, ms: performance.now() - t0,
+             note: 'The points are collinear: a straight line (A = 0) fits exactly.' };
+  }
+  const work = makeWork();
+  const sols = [];
+  let land = null, scanned = 0;
+  for (let bi = 0; bi < bands.length; bi++) {
+    const [lo, hi, dk, nT] = bands[bi];
+    const G = scanBand(nrm.X, nrm.Y, lo, hi, dk, nT, work);
+    if (bi === 0) land = G;
+    scanned = G.hi;
+    const seeds = findSeeds(G);
+    seeds.sort((a, b) => a.ik - b.ik);
+    for (const sd of seeds) {
+      const r = refine(lo + sd.ik * dk, PI * sd.it / nT, nrm.X, nrm.Y, 80);
+      if (!r || !(Math.sqrt(r.cost) < 1e-9)) continue;
+      const w = toWave(r.p, nrm);
+      if (!isFinite(w.A) || !isFinite(w.C) || !isFinite(w.lambda)) continue;
+      let dup = false;
+      for (const s of sols) {
+        let dth = Math.abs(s.thetaDeg - w.thetaDeg); dth = Math.min(dth, 180 - dth);
+        if (Math.abs(s.kappa - w.kappa) < 1e-5 * (1 + w.kappa) && dth < 1e-4) { dup = true; break; }
+      }
+      if (!dup) sols.push(w);
+    }
+    if (sols.length) break;
+  }
+  sols.sort((a, b) => a.kappa - b.kappa);
+  const out = { solutions: sols, land, L: nrm.L, ms: performance.now() - t0, scannedKappa: scanned };
+  if (!sols.length) out.note = 'No finite exact solution found down to λ ≈ ' + (TWO_PI * nrm.L / scanned).toPrecision(3) +
+    '. Highly symmetric layouts (rectangles, four collinear points, …) can have none; nudge a point slightly.';
+  return out;
+}
+/* ==== SOLVER END ==== */
+
+/* ============================== UI ============================== */
+const $ = id => document.getElementById(id);
+const plot = $('plot'), pctx = plot.getContext('2d');
+const landCv = $('land'), lctx = landCv.getContext('2d');
+const COLORS = ['#e4572e', '#2e86ab', '#2fa66a', '#9b5de5', '#e0a100'];
+const WAVE_FIELDS = [
+  { key: 'A',      label: 'Amplitude A',      step: 0.1 },
+  { key: 'lambda', label: 'Wavelength λ',     step: 0.1, min: 0 },
+  { key: 'phi',    label: 'Phase φ (rad)',    step: 0.05 },
+  { key: 'C',      label: 'Offset C',         step: 0.1 },
+  { key: 'theta',  label: 'Angle θ (degrees)', step: 1 }
+];
+const state = {
+  pts: [], wave: { A: 3, lambda: 10, phi: 0, C: 0, theta: 0 },
+  solutions: [], selected: -1, land: null, landImg: null, info: null,
+  viewH: 12, autoSolve: true, lastSolveMs: 0, hover: -1
+};
+const rnd = (a, b) => a + Math.random() * (b - a);
+const roundTo = (x, d) => Math.round(x * Math.pow(10, d)) / Math.pow(10, d);
+const fmtIn = x => String(Number(Number(x).toPrecision(7)));
+function fmt(x, d) {
+  d = d || 4;
+  if (x === Infinity || x === -Infinity) return x > 0 ? '∞' : '−∞';
+  if (!isFinite(x)) return '—';
+  if (x === 0) return '0';
+  const a = Math.abs(x);
+  if (a >= 1e5 || a < 1e-3) return x.toExponential(2).replace('e+', 'e');
+  return String(Number(x.toPrecision(d)));
+}
+const fmtTick = x => String(Number(x.toPrecision(6)));
+function cssVar(name, fb) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fb;
+}
+function niceStep(raw) {
+  const p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+  return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p;
+}
+function fitCanvas(cv) {
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+  const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+  if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
+  return { w, h, dpr };
+}
+
+/* ---------- inputs ---------- */
+const ptInputs = [], waveInputs = {};
+let solveTimer = 0, dragRaf = 0;
+
+(function buildInputs() {
+  const ph = $('pointRows');
+  for (let i = 0; i < N; i++) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = '<span class="dot" style="background:' + COLORS[i] + '"></span>' +
+      '<label class="fld"><span>x<sub>' + (i + 1) + '</sub></span><input type="number" step="0.1" aria-label="Point ' + (i + 1) + ' x"></label>' +
+      '<label class="fld"><span>y<sub>' + (i + 1) + '</sub></span><input type="number" step="0.1" aria-label="Point ' + (i + 1) + ' y"></label>';
+    ph.appendChild(row);
+    const ins = row.querySelectorAll('input');
+    ptInputs.push(ins);
+    ['x', 'y'].forEach((axis, j) => ins[j].addEventListener('input', () => {
+      const v = parseFloat(ins[j].value);
+      if (!Number.isFinite(v)) return;
+      state.pts[i][axis] = v;
+      pointsChanged({ delay: 200 });
+    }));
+  }
+  const wh = $('waveRows');
+  WAVE_FIELDS.forEach(f => {
+    const row = document.createElement('div');
+    row.className = 'wrow';
+    row.innerHTML = '<span>' + f.label + '</span><input type="number" step="' + f.step + '" aria-label="' + f.label + '">';
+    wh.appendChild(row);
+    const inp = row.querySelector('input');
+    waveInputs[f.key] = inp;
+    inp.addEventListener('input', () => {
+      const v = parseFloat(inp.value);
+      if (!Number.isFinite(v)) return;
+      if (f.key === 'lambda' && !(v > 0)) return;
+      state.wave[f.key] = v;
+      state.selected = -1;
+      renderSolutions(); drawPlot(); drawLandscape(); updateStatus();
+    });
+  });
+})();
+
+function syncPointInputs() {
+  for (let i = 0; i < N; i++) {
+    ptInputs[i][0].value = fmtIn(state.pts[i].x);
+    ptInputs[i][1].value = fmtIn(state.pts[i].y);
+  }
+}
+function syncWaveInputs() {
+  for (const f of WAVE_FIELDS) waveInputs[f.key].value = fmtIn(state.wave[f.key]);
+}
+function computeView() {
+  let m = 10;
+  for (const p of state.pts) m = Math.max(m, Math.abs(p.x), Math.abs(p.y));
+  const steps = [12, 15, 20, 25, 30, 40, 50, 60, 80, 100, 150, 200, 300, 500, 1000, 2000, 5000, 1e4, 1e5, 1e6];
+  state.viewH = steps.find(s => s >= m * 1.2) || m * 1.2;
+}
+
+/* ---------- actions ---------- */
+function randomizePoints() {
+  state.pts = [];
+  for (let i = 0; i < N; i++) state.pts.push({ x: roundTo(rnd(-9, 9), 2), y: roundTo(rnd(-9, 9), 2) });
+  syncPointInputs();
+  pointsChanged({ delay: 0 });
+}
+function randomizeWave() {
+  state.wave = {
+    A: roundTo(rnd(1.5, 6), 2), lambda: roundTo(rnd(4, 16), 2), phi: roundTo(rnd(0, TWO_PI), 2),
+    C: roundTo(rnd(-5, 5), 2), theta: roundTo(rnd(0, 180), 1)
+  };
+  state.selected = -1;
+  syncWaveInputs(); renderSolutions(); drawPlot(); drawLandscape(); updateStatus();
+}
+function placePointsOnWave() {
+  const w = state.wave;
+  if (!(w.lambda > 0)) return;
+  const th = w.theta * PI / 180, c = Math.cos(th), s = Math.sin(th), k = TWO_PI / w.lambda;
+  const us = [], pts = [];
+  for (let tries = 0; tries < 6000 && pts.length < N; tries++) {
+    const u = rnd(-14, 14), v = w.A * Math.sin(k * u + w.phi) + w.C;
+    const x = u * c - v * s, y = u * s + v * c;
+    if (Math.abs(x) > 9.5 || Math.abs(y) > 9.5) continue;
+    if (us.some(q => Math.abs(q - u) < 0.6)) continue;
+    us.push(u); pts.push({ x, y });
+  }
+  if (pts.length < N) {
+    state.note = 'The wave crosses too little of the visible area to place five points on it.';
+    updateStatus();
+    return;
+  }
+  state.note = '';
+  state.pts = pts;
+  syncPointInputs();
+  computeView();
+  invalidateSolutions();
+  state.note = 'Points placed on the wave. Press "Find smoothest exact fit" to look for a smoother exact solution.';
+  drawAll();
+}
+function invalidateSolutions() {
+  clearTimeout(solveTimer);
+  state.solutions = []; state.selected = -1; state.land = null; state.landImg = null; state.info = null;
+}
+function pointsChanged(o) {
+  state.note = '';
+  computeView();
+  if (state.autoSolve) {
+    clearTimeout(solveTimer);
+    if (!o || !o.delay) solveNow(); else solveTimer = setTimeout(solveNow, o.delay);
+    if (o && o.delay) drawPlot();
+  } else {
+    invalidateSolutions();
+    drawAll();
+  }
+}
+function solveNow() {
+  clearTimeout(solveTimer);
+  const t0 = performance.now();
+  const res = solveSmoothest(state.pts);
+  state.lastSolveMs = performance.now() - t0;
+  state.land = res.land; state.landImg = null; state.info = res;
+  state.solutions = res.solutions; state.note = '';
+  if (res.solutions.length) applySolution(0); else { state.selected = -1; drawAll(); }
+}
+function applySolution(i) {
+  const s = state.solutions[i];
+  if (!s) return;
+  state.wave = {
+    A: s.A, lambda: Number.isFinite(s.lambda) ? s.lambda : state.wave.lambda,
+    phi: s.phi, C: s.C, theta: s.thetaDeg
+  };
+  state.selected = i;
+  syncWaveInputs();
+  drawAll();
+}
+
+/* ---------- solution list & status ---------- */
+function renderSolutions() {
+  const ol = $('solList'), info = $('solInfo');
+  ol.innerHTML = '';
+  const n = state.solutions.length;
+  if (!state.info) {
+    info.textContent = 'Press the button (or enable auto-solve) to search.';
+    return;
+  }
+  info.textContent = n
+    ? n + ' exact solution' + (n === 1 ? '' : 's') + ' found in ' + fmt(state.info.ms, 3) + ' ms (longest wavelength first).'
+    : (state.info.note || 'No exact solution found.');
+  state.solutions.slice(0, 40).forEach((s, i) => {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    if (i === state.selected) b.className = 'sel';
+    b.innerHTML = '<span class="tag">' + (i === 0 ? 'smoothest' : '#' + (i + 1)) + '</span>' +
+      '<span class="mono">' + (s.degenerate ? 'straight line, θ=' + fmt(s.thetaDeg, 4) + '°' :
+        'λ=' + fmt(s.lambda, 4) + ' A=' + fmt(s.A, 3) + ' θ=' + fmt(s.thetaDeg, 4) + '°') + '</span>';
+    b.addEventListener('click', () => applySolution(i));
+    li.appendChild(b);
+    ol.appendChild(li);
+  });
+}
+function updateStatus() {
+  const w = state.wave, st = $('status');
+  const ok = [w.A, w.lambda, w.phi, w.C, w.theta].every(Number.isFinite) && w.lambda > 0;
+  if (!ok) { st.textContent = 'Wave parameters are not valid.'; return; }
+  const e = waveErrors(w, state.pts);
+  let L = 0;
+  for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++)
+    L = Math.max(L, Math.hypot(state.pts[i].x - state.pts[j].x, state.pts[i].y - state.pts[j].y));
+  const exact = e.max <= 1e-7 * Math.max(1, L, Math.abs(w.A), Math.abs(w.C));
+  let h = '<div><span class="badge ' + (exact ? 'ok' : 'bad') + '">' + (exact ? 'Exact fit' : 'Not exact') +
+    '</span><span class="mono">max error ' + fmt(e.max, 3) + '</span>' +
+    (state.selected === 0 && state.solutions.length ? ' <span class="muted">· smoothest solution</span>'
+      : state.selected > 0 ? ' <span class="muted">· solution #' + (state.selected + 1) + '</span>'
+      : ' <span class="muted">· custom wave</span>') + '</div>';
+  h += '<div class="mono muted">A = ' + fmt(w.A) + ' &nbsp; λ = ' + fmt(w.lambda) + ' &nbsp; φ = ' + fmt(w.phi) +
+    ' &nbsp; C = ' + fmt(w.C) + ' &nbsp; θ = ' + fmt(w.theta) + '°' +
+    (L > 0 ? ' &nbsp; (λ ≈ ' + fmt(w.lambda / L, 3) + ' × span of the points)' : '') + '</div>';
+  if (L > 0 && w.lambda > 1e4 * L) h += '<div class="muted">The wavelength is enormous compared with the points, so this wave is essentially a parabola.</div>';
+  if (!state.solutions.length && state.info && state.info.note) h += '<div class="muted">' + state.info.note + '</div>';
+  if (state.note) h += '<div class="muted">' + state.note + '</div>';
+  st.innerHTML = h;
+}
+
+/* ---------- main plot ---------- */
+function drawPlot() {
+  const { w, h, dpr } = fitCanvas(plot);
+  const ctx = pctx;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const cBg = cssVar('--canvas', '#fff'), cGrid = cssVar('--grid', '#eceff5'), cAxis = cssVar('--axis', '#b7bfce');
+  const cInk = cssVar('--ink', '#1b2333'), cMuted = cssVar('--muted', '#667085'), cWave = cssVar('--wave', '#e0245e');
+  ctx.fillStyle = cBg; ctx.fillRect(0, 0, w, h);
+
+  const H = state.viewH, sc = Math.min(w, h) / (2 * H);
+  const SX = x => w / 2 + x * sc, SY = y => h / 2 - y * sc;
+  const hx = w / (2 * sc), hy = h / (2 * sc);
+  const clampPx = v => (v > 1e6 ? 1e6 : v < -1e6 ? -1e6 : v);
+
+  // grid + labels
+  const step = niceStep(2 * H / 9);
+  ctx.lineWidth = 1; ctx.font = '11px system-ui, sans-serif'; ctx.fillStyle = cMuted;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  for (let i = Math.ceil(-hx / step); i <= Math.floor(hx / step); i++) {
+    const g = i * step, sx = SX(g);
+    ctx.strokeStyle = i === 0 ? cAxis : cGrid;
+    ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, h); ctx.stroke();
+    if (sx > 24 && sx < w - 18) ctx.fillText(fmtTick(g), sx, h - 3);
+  }
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  for (let i = Math.ceil(-hy / step); i <= Math.floor(hy / step); i++) {
+    const g = i * step, sy = SY(g);
+    ctx.strokeStyle = i === 0 ? cAxis : cGrid;
+    ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(w, sy); ctx.stroke();
+    if (sy > 14 && sy < h - 26) ctx.fillText(fmtTick(g), 4, sy - 7);
+  }
+
+  const wv = state.wave;
+  const okWave = [wv.A, wv.C, wv.phi, wv.theta].every(Number.isFinite) && Number.isFinite(wv.lambda) && wv.lambda > 0;
+  if (okWave) {
+    const th = wv.theta * PI / 180, c = Math.cos(th), s = Math.sin(th), k = TWO_PI / wv.lambda;
+    const Rr = Math.hypot(hx, hy) * 1.02;
+    // centre line v = C
+    ctx.save();
+    ctx.setLineDash([6, 6]); ctx.strokeStyle = cMuted; ctx.globalAlpha = 0.6; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(clampPx(SX(-Rr * c - wv.C * s)), clampPx(SY(-Rr * s + wv.C * c)));
+    ctx.lineTo(clampPx(SX(Rr * c - wv.C * s)), clampPx(SY(Rr * s + wv.C * c)));
+    ctx.stroke();
+    ctx.restore();
+    // error segments (point -> curve, measured along v)
+    ctx.lineWidth = 2; ctx.strokeStyle = '#d62828';
+    for (let i = 0; i < N; i++) {
+      const p = state.pts[i];
+      const u = p.x * c + p.y * s, v = -p.x * s + p.y * c;
+      const err = v - (wv.A * Math.sin(k * u + wv.phi) + wv.C);
+      if (Math.abs(err) * sc < 0.6) continue;
+      ctx.beginPath();
+      ctx.moveTo(clampPx(SX(p.x)), clampPx(SY(p.y)));
+      ctx.lineTo(clampPx(SX(p.x + err * s)), clampPx(SY(p.y - err * c)));
+      ctx.stroke();
+    }
+    // the sine wave
+    const n = Math.min(60000, Math.max(800, Math.ceil(2 * Rr / wv.lambda * 28)));
+    ctx.strokeStyle = cWave; ctx.lineWidth = 2.6; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    let pen = false;
+    for (let i = 0; i <= n; i++) {
+      const u = -Rr + 2 * Rr * i / n;
+      const v = wv.A * Math.sin(k * u + wv.phi) + wv.C;
+      const x = u * c - v * s, y = u * s + v * c;
+      const px = SX(x), py = SY(y);
+      if (!Number.isFinite(px) || !Number.isFinite(py)) { pen = false; continue; }
+      if (!pen) { ctx.moveTo(clampPx(px), clampPx(py)); pen = true; } else ctx.lineTo(clampPx(px), clampPx(py));
+    }
+    ctx.stroke();
+  }
+
+  // points
+  ctx.font = '600 12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  for (let i = 0; i < N; i++) {
+    const p = state.pts[i], px = SX(p.x), py = SY(p.y);
+    ctx.beginPath(); ctx.arc(px, py, 7, 0, TWO_PI);
+    ctx.fillStyle = COLORS[i]; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = cBg; ctx.stroke();
+    ctx.fillStyle = cInk;
+    ctx.fillText('P' + (i + 1) + (state.hover === i ? ' (' + fmt(p.x, 3) + ', ' + fmt(p.y, 3) + ')' : ''), px + 11, py - 9);
+  }
+
+  // propagation-direction indicator
+  if (okWave) {
+    const cx = w - 50, cy = 40, r = 20, th = wv.theta * PI / 180;
+    ctx.save(); ctx.globalAlpha = 0.88; ctx.fillStyle = cBg;
+    ctx.fillRect(cx - 40, cy - 30, 80, 84);
+    ctx.restore();
+    ctx.lineWidth = 1; ctx.strokeStyle = cAxis;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, TWO_PI); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.stroke();
+    const ex = cx + r * Math.cos(th), ey = cy - r * Math.sin(th);
+    ctx.strokeStyle = cWave; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.beginPath(); ctx.arc(ex, ey, 3.5, 0, TWO_PI); ctx.fillStyle = cWave; ctx.fill();
+    ctx.fillStyle = cMuted; ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('θ = ' + fmt(wv.theta, 4) + '°', cx, cy + r + 15);
+  }
+}
+
+/* ---------- landscape ---------- */
+const PALETTE = [[0, [4, 4, 20]], [0.25, [66, 10, 104]], [0.5, [147, 38, 103]],
+                 [0.75, [221, 81, 58]], [0.9, [252, 165, 10]], [1, [252, 255, 164]]];
+function palette(g) {
+  for (let i = 1; i < PALETTE.length; i++) {
+    if (g <= PALETTE[i][0]) {
+      const a = PALETTE[i - 1], b = PALETTE[i], t = (g - a[0]) / (b[0] - a[0]);
+      return [a[1][0] + t * (b[1][0] - a[1][0]), a[1][1] + t * (b[1][1] - a[1][1]), a[1][2] + t * (b[1][2] - a[1][2])];
+    }
+  }
+  return PALETTE[PALETTE.length - 1][1];
+}
+function buildLandImage() {
+  const G = state.land;
+  if (!G) return null;
+  const off = document.createElement('canvas');
+  off.width = G.nT; off.height = G.nK;
+  const octx = off.getContext('2d');
+  const img = octx.createImageData(G.nT, G.nK), d = img.data;
+  // colour scale: "typical" error (60th percentile) is dark, the smallest errors are bright
+  const n = G.R.length, logs = new Float32Array(n);
+  let mn = Infinity;
+  for (let i = 0; i < n; i++) { logs[i] = Math.log10(G.R[i] + 1e-300); if (logs[i] < mn) mn = logs[i]; }
+  const sample = [];
+  for (let i = 0; i < n; i += 7) sample.push(logs[i]);
+  sample.sort((a, b) => a - b);
+  const hi = sample[Math.floor(sample.length * 0.6)];
+  const lo = Math.max(mn, hi - 5);
+  const span = Math.max(1e-6, hi - lo);
+  for (let it = 0; it < G.nT; it++) for (let ik = 0; ik < G.nK; ik++) {
+    let g = (hi - logs[it * G.nK + ik]) / span;
+    g = g < 0 ? 0 : g > 1 ? 1 : Math.pow(g, 0.75);
+    const c = palette(g), o = (ik * G.nT + it) * 4;
+    d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
+  }
+  octx.putImageData(img, 0, 0);
+  return off;
+}
+function drawLandscape() {
+  const { w, h, dpr } = fitCanvas(landCv);
+  const ctx = lctx;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const cBg = cssVar('--canvas', '#fff'), cMuted = cssVar('--muted', '#667085'), cAxis = cssVar('--axis', '#b7bfce');
+  ctx.fillStyle = cBg; ctx.fillRect(0, 0, w, h);
+  const ml = 58, mr = 22, mt = 8, mb = 36;
+  const pw = w - ml - mr, ph = h - mt - mb;
+  ctx.font = '11px system-ui, sans-serif'; ctx.fillStyle = cMuted;
+  const G = state.land;
+  if (!G || pw < 10 || ph < 10) {
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('No landscape yet — solve to see where the exact solutions sit.', w / 2, h / 2);
+    return;
+  }
+  if (!state.landImg) state.landImg = buildLandImage();
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(state.landImg, ml, mt, pw, ph);
+  ctx.strokeStyle = cAxis; ctx.lineWidth = 1; ctx.strokeRect(ml + 0.5, mt + 0.5, pw, ph);
+
+  const L = state.info ? state.info.L : 1;
+  ctx.textBaseline = 'top'; ctx.textAlign = 'center';
+  for (let a = 0; a <= 180; a += 45) {
+    const x = ml + pw * a / 180;
+    ctx.fillStyle = cMuted; ctx.fillText(a + '°', x, mt + ph + 4);
+  }
+  ctx.fillText('propagation angle θ', ml + pw / 2, mt + ph + 19);
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let q = 0; q <= 4; q++) {
+    const kap = G.hi * q / 4, y = mt + ph * kap / G.hi;
+    ctx.fillStyle = cMuted;
+    ctx.fillText(kap === 0 ? 'λ = ∞' : 'λ ' + fmt(TWO_PI * L / kap, 3), ml - 6, Math.min(Math.max(y, mt + 6), mt + ph - 6));
+  }
+  // solution markers
+  const sols = state.solutions;
+  for (let i = 0; i < sols.length; i++) {
+    const s = sols[i];
+    if (s.degenerate || s.kappa > G.hi) continue;
+    const x = ml + pw * s.thetaDeg / 180, y = mt + ph * s.kappa / G.hi;
+    ctx.beginPath(); ctx.arc(x, y, i === state.selected ? 7 : 4.5, 0, TWO_PI);
+    ctx.lineWidth = i === state.selected ? 2.5 : 1.5;
+    ctx.strokeStyle = i === state.selected ? '#ffffff' : '#00e5ff';
+    ctx.stroke();
+    if (i < 9) {
+      ctx.fillStyle = '#ffffff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(i + 1), x + 9, y);
+    }
+  }
+}
+
+function drawAll() { renderSolutions(); drawPlot(); drawLandscape(); updateStatus(); }
+
+/* ---------- dragging points on the plot ---------- */
+let drag = null;
+function plotMetrics() {
+  const r = plot.getBoundingClientRect();
+  return { r, sc: Math.min(r.width, r.height) / (2 * state.viewH) };
+}
+plot.addEventListener('pointerdown', e => {
+  const { r, sc } = plotMetrics();
+  const px = e.clientX - r.left, py = e.clientY - r.top;
+  let best = -1, bd = 16;
+  for (let i = 0; i < N; i++) {
+    const d = Math.hypot(r.width / 2 + state.pts[i].x * sc - px, r.height / 2 - state.pts[i].y * sc - py);
+    if (d < bd) { bd = d; best = i; }
+  }
+  if (best < 0) return;
+  drag = { i: best, H: state.viewH };
+  plot.setPointerCapture(e.pointerId);
+  plot.style.cursor = 'grabbing';
+  e.preventDefault();
+});
+plot.addEventListener('pointermove', e => {
+  const { r, sc } = plotMetrics();
+  const px = e.clientX - r.left, py = e.clientY - r.top;
+  if (!drag) {
+    let hit = -1;
+    for (let i = 0; i < N; i++)
+      if (Math.hypot(r.width / 2 + state.pts[i].x * sc - px, r.height / 2 - state.pts[i].y * sc - py) < 16) hit = i;
+    plot.style.cursor = hit >= 0 ? 'grab' : 'default';
+    if (hit !== state.hover) { state.hover = hit; drawPlot(); }
+    return;
+  }
+  state.hover = drag.i;
+  const clamp = v => Math.max(-drag.H, Math.min(drag.H, v));
+  state.pts[drag.i].x = clamp((px - r.width / 2) / sc);
+  state.pts[drag.i].y = clamp(-(py - r.height / 2) / sc);
+  syncPointInputs();
+  state.note = '';
+  if (state.autoSolve && state.lastSolveMs < 60) {
+    if (!dragRaf) dragRaf = requestAnimationFrame(() => { dragRaf = 0; solveNow(); });
+  } else {
+    drawPlot(); updateStatus();
+  }
+});
+function endDrag() {
+  if (!drag) return;
+  drag = null;
+  plot.style.cursor = 'default';
+  if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = 0; }
+  pointsChanged({ delay: 0 });
+}
+plot.addEventListener('pointerup', endDrag);
+plot.addEventListener('pointercancel', endDrag);
+
+/* ---------- wiring ---------- */
+$('btnRandPts').addEventListener('click', randomizePoints);
+$('btnRandWave').addEventListener('click', randomizeWave);
+$('btnPlace').addEventListener('click', placePointsOnWave);
+$('btnSolve').addEventListener('click', solveNow);
+$('chkAuto').addEventListener('change', e => {
+  state.autoSolve = e.target.checked;
+  if (state.autoSolve) solveNow();
+});
+window.addEventListener('resize', () => { drawPlot(); drawLandscape(); });
+if (typeof ResizeObserver !== 'undefined') {
+  const ro = new ResizeObserver(() => { drawPlot(); drawLandscape(); });
+  ro.observe(plot); ro.observe(landCv);
+}
+if (window.matchMedia) {
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  const rd = () => { drawPlot(); drawLandscape(); };
+  if (mq.addEventListener) mq.addEventListener('change', rd);
+}
+
+/* ---------- start ---------- */
+syncWaveInputs();
+randomizePoints();          // creates the points and (auto-solve) shows the smoothest exact wave
+})();
+</script>
+</body>
+</html>
