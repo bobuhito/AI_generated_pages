@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#eef1f4">
+<title>Square Dice — Transparent Box Physics</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; margin: 0; overflow: hidden;
+    background: #eef1f4;
+    overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+  }
+  body { position: fixed; inset: 0; }
+  canvas {
+    display: block; width: 100%; height: 100%;
+    touch-action: none;
+    cursor: default;
+  }
+  #motionPermission {
+    position: fixed;
+    left: 50%; bottom: max(18px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    z-index: 2;
+    display: none;
+    border: 1px solid rgba(37, 48, 59, .14);
+    border-radius: 999px;
+    padding: 10px 16px;
+    color: #25303b;
+    background: rgba(255,255,255,.94);
+    box-shadow: 0 4px 18px rgba(25,35,45,.12);
+    font: 600 14px/1.15 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #motionPermission.visible { display: block; }
+  #motionPermission:focus-visible { outline: 2px solid #557da8; outline-offset: 3px; }
+</style>
+</head>
+<body>
+<canvas id="scene" aria-label="Two square dice moving under gravity. Tap or push them to change their motion."></canvas>
+<button id="motionPermission" type="button">Enable motion</button>
+<script>
+(() => {
+  'use strict';
+
+  const canvas = document.getElementById('scene');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const permissionButton = document.getElementById('motionPermission');
+  const TAU = Math.PI * 2;
+  const DEFAULT_GRAVITY_SCALE = 3800;  // nominal CSS pixels per physical meter
+  // Override with ?scale=5000, for example. Zero disables all sensor-derived
+  // acceleration; values are integer CSS pixels per meter and capped safely.
+  const requestedScale = new URLSearchParams(location.search).get('scale');
+  const parsedScale = requestedScale !== null && /^\d+$/.test(requestedScale)
+    ? Number(requestedScale) : DEFAULT_GRAVITY_SCALE;
+  const GRAVITY_SCALE = Number.isSafeInteger(parsedScale)
+    ? Math.min(50000, Math.max(0, parsedScale)) : DEFAULT_GRAVITY_SCALE;
+  const DEFAULT_GRAVITY = { x: 0, y: 9.81 };
+  const MAX_SENSOR_ACCELERATION = 16 * 9.81; // generous safety bound; no normal filtering
+  const MAX_FRAME_TIME = 0.05;
+  const MAX_STEP_TIME = 1 / 120;
+  const MAX_TRAVEL_PER_STEP = 0.20; // fraction of dieSize; avoids fast collision tunneling
+  const WALL_RESTITUTION = 0.43;
+  const DIE_RESTITUTION = 0.48;
+  const CONTACT_FRICTION = 0.36;
+  const POSITION_SLOP = 0.12;
+  const POSITION_CORRECTION = 0.68;
+  const CORNER_SEGMENTS = 5;
+  const WALLS = [
+    { axis: 0, sign: -1, limit: 'zero', normal: { x: 1, y: 0 } },
+    { axis: 0, sign: 1, limit: 'width', normal: { x: -1, y: 0 } },
+    { axis: 1, sign: -1, limit: 'zero', normal: { x: 0, y: 1 } },
+    { axis: 1, sign: 1, limit: 'height', normal: { x: 0, y: -1 } }
+  ];
+
+  let width = 1;
+  let height = 1;
+  let pixelRatio = 1;
+  let dieSize = 72;
+  let dieRadius = 9;
+  let localShape = [];
+  let dice = [];
+  let lastFrameTime = 0;
+  let sensorSeen = false;
+  let lastSensorTime = -Infinity;
+  // Specific-force sample transformed into screen coordinates (m/s²).
+  // Its sign is chosen so a phone acceleration pushes the dice oppositely.
+  let sensorInstant = { x: 0, y: 9.81 };
+  let gravityNow = { x: 0, y: GRAVITY_SCALE * 9.81 };
+  let activePointer = null;
+  let motionPermissionPending = false;
+
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const dot = (a, b) => a.x * b.x + a.y * b.y;
+  const cross = (a, b) => a.x * b.y - a.y * b.x;
+  const length = v => Math.hypot(v.x, v.y);
+  const normalize = v => {
+    const m = length(v);
+    return m > 1e-9 ? { x: v.x / m, y: v.y / m } : { x: 1, y: 0 };
+  };
+  const add = (a, b) => ({ x: a.x + b.x, y: a.y + b.y });
+  const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
+  const mul = (v, s) => ({ x: v.x * s, y: v.y * s });
+  const rotate = (p, a) => {
+    const c = Math.cos(a), s = Math.sin(a);
+    return { x: p.x * c - p.y * s, y: p.x * s + p.y * c };
+  };
+  const omegaCross = (w, r) => ({ x: -w * r.y, y: w * r.x });
+
+  function makeRoundedSquare(half, radius, segments) {
+    const core = half - radius;
+    const corners = [
+      { x: core, y: -core, start: -Math.PI / 2 },
+      { x: core, y: core, start: 0 },
+      { x: -core, y: core, start: Math.PI / 2 },
+      { x: -core, y: -core, start: Math.PI }
+    ];
+    const points = [];
+    for (const corner of corners) {
+      for (let i = 0; i < segments; i++) {
+        const a = corner.start + (Math.PI / 2) * i / segments;
+        points.push({
+          x: corner.x + Math.cos(a) * radius,
+          y: corner.y + Math.sin(a) * radius
+        });
+      }
+    }
+    return points;
+  }
+
+  function makeDie(x, y, angle, vx, vy, omega, id) {
+    const mass = 1;
+    const inertia = mass * dieSize * dieSize / 6;
+    return {
+      id, x, y, angle, vx, vy, omega,
+      mass, invMass: 1 / mass,
+      inertia, invInertia: 1 / inertia,
+      touching: false,
+      colorSeed: id === 0 ? 0 : 1
+    };
+  }
+
+  function resize() {
+    const oldW = width, oldH = height;
+    width = Math.max(1, window.innerWidth);
+    height = Math.max(1, window.innerHeight);
+    pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.round(width * pixelRatio);
+    canvas.height = Math.round(height * pixelRatio);
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+    ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+
+    const oldSize = dieSize;
+    dieSize = clamp(Math.min(width, height) * 0.135, 52, 94);
+    dieRadius = dieSize * 0.135;
+    localShape = makeRoundedSquare(dieSize / 2, dieRadius, CORNER_SEGMENTS);
+
+    if (!dice.length) {
+      const separation = Math.min(width * 0.20, dieSize * 1.45);
+      dice = [
+        makeDie(width * 0.5 - separation * 0.5, height * 0.22, -0.36, 45, -12, 1.55, 0),
+        makeDie(width * 0.5 + separation * 0.5, height * 0.31, 0.48, -32, 8, -1.25, 1)
+      ];
+    } else {
+      const sx = oldW > 1 ? width / oldW : 1;
+      const sy = oldH > 1 ? height / oldH : 1;
+      const scale = oldSize > 0 ? dieSize / oldSize : 1;
+      for (const d of dice) {
+        d.x *= sx; d.y *= sy;
+        d.x = clamp(d.x, dieSize * 0.55, width - dieSize * 0.55);
+        d.y = clamp(d.y, dieSize * 0.55, height - dieSize * 0.55);
+        d.vx *= scale; d.vy *= scale;
+        d.inertia = d.mass * dieSize * dieSize / 6;
+        d.invInertia = 1 / d.inertia;
+      }
+    }
+  }
+
+  function worldVertices(body) {
+    const c = Math.cos(body.angle), s = Math.sin(body.angle);
+    return localShape.map(p => ({
+      x: body.x + p.x * c - p.y * s,
+      y: body.y + p.x * s + p.y * c
+    }));
+  }
+
+  function projectPolygon(points, axis) {
+    let min = Infinity, max = -Infinity;
+    for (const p of points) {
+      const v = dot(p, axis);
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    return { min, max };
+  }
+
+  function bestFace(points, targetNormal) {
+    let best = { index: 0, score: -Infinity };
+    for (let i = 0; i < points.length; i++) {
+      const a = points[i], b = points[(i + 1) % points.length];
+      const edge = sub(b, a);
+      // The rounded-square vertices are clockwise in canvas coordinates.
+      const outward = normalize({ x: edge.y, y: -edge.x });
+      const score = dot(outward, targetNormal);
+      if (score > best.score) best = { index: i, score };
+    }
+    return best;
+  }
+
+  function clipSegment(points, normal, offset) {
+    if (points.length < 2) return points;
+    const a = points[0], b = points[1];
+    const da = dot(normal, a) - offset;
+    const db = dot(normal, b) - offset;
+    if (da <= 0 && db <= 0) return [a, b];
+    if (da > 0 && db > 0) return [];
+    const t = da / (da - db);
+    const hit = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    return da > 0 ? [hit, b] : [a, hit];
+  }
+
+  function contactManifold(polyA, polyB, normal) {
+    const faceA = bestFace(polyA, normal);
+    const faceB = bestFace(polyB, mul(normal, -1));
+    const referenceIsA = faceA.score >= faceB.score;
+    const ref = referenceIsA ? polyA : polyB;
+    const inc = referenceIsA ? polyB : polyA;
+    const refNormal = referenceIsA ? normal : mul(normal, -1);
+    const refFace = referenceIsA ? faceA : faceB;
+    const ref1 = ref[refFace.index];
+    const ref2 = ref[(refFace.index + 1) % ref.length];
+    const tangent = normalize(sub(ref2, ref1));
+    const incFace = bestFace(inc, mul(refNormal, -1));
+    let clipped = [inc[incFace.index], inc[(incFace.index + 1) % inc.length]];
+    clipped = clipSegment(clipped, mul(tangent, -1), -dot(tangent, ref1));
+    clipped = clipSegment(clipped, tangent, dot(tangent, ref2));
+
+    const contacts = [];
+    for (const p of clipped) {
+      const separation = dot(refNormal, sub(p, ref1));
+      if (separation <= 0.75) {
+        contacts.push({
+          x: p.x - refNormal.x * separation * 0.5,
+          y: p.y - refNormal.y * separation * 0.5
+        });
+      }
+    }
+    if (contacts.length) return contacts;
+
+    // A rare vertex/vertex fallback for tiny rounded-corner contacts.
+    let maxA = -Infinity, minB = Infinity;
+    for (const p of polyA) maxA = Math.max(maxA, dot(p, normal));
+    for (const p of polyB) minB = Math.min(minB, dot(p, normal));
+    const supportA = polyA.filter(p => maxA - dot(p, normal) < 0.8);
+    const supportB = polyB.filter(p => dot(p, normal) - minB < 0.8);
+    const avg = list => list.reduce((s, p) => add(s, p), { x: 0, y: 0 });
+    const pa = mul(avg(supportA.length ? supportA : polyA), 1 / Math.max(1, supportA.length));
+    const pb = mul(avg(supportB.length ? supportB : polyB), 1 / Math.max(1, supportB.length));
+    return [{ x: (pa.x + pb.x) * 0.5, y: (pa.y + pb.y) * 0.5 }];
+  }
+
+  function satCollision(a, b) {
+    const pa = worldVertices(a), pb = worldVertices(b);
+    let minOverlap = Infinity;
+    let bestAxis = null;
+
+    for (const poly of [pa, pb]) {
+      for (let i = 0; i < poly.length; i++) {
+        const p1 = poly[i], p2 = poly[(i + 1) % poly.length];
+        const edge = sub(p2, p1);
+        const axis = normalize({ x: edge.y, y: -edge.x });
+        const ra = projectPolygon(pa, axis);
+        const rb = projectPolygon(pb, axis);
+        const overlap = Math.min(ra.max, rb.max) - Math.max(ra.min, rb.min);
+        if (overlap <= 0) return null;
+        if (overlap < minOverlap) {
+          minOverlap = overlap;
+          bestAxis = axis;
+        }
+      }
+    }
+
+    if (dot({ x: b.x - a.x, y: b.y - a.y }, bestAxis) < 0) bestAxis = mul(bestAxis, -1);
+    return {
+      normal: bestAxis,
+      penetration: minOverlap,
+      contacts: contactManifold(pa, pb, bestAxis)
+    };
+  }
+
+  function velocityAt(body, point) {
+    const r = { x: point.x - body.x, y: point.y - body.y };
+    return add({ x: body.vx, y: body.vy }, omegaCross(body.omega, r));
+  }
+
+  function applyPairImpulse(a, b, point, normal) {
+    const ra = { x: point.x - a.x, y: point.y - a.y };
+    const rb = { x: point.x - b.x, y: point.y - b.y };
+    let relative = sub(velocityAt(b, point), velocityAt(a, point));
+    const normalSpeed = dot(relative, normal);
+    let normalImpulse = 0;
+
+    if (normalSpeed < 0) {
+      const raN = cross(ra, normal), rbN = cross(rb, normal);
+      const denom = a.invMass + b.invMass + raN * raN * a.invInertia + rbN * rbN * b.invInertia;
+      const restitution = normalSpeed < -34 ? DIE_RESTITUTION : 0;
+      normalImpulse = -(1 + restitution) * normalSpeed / Math.max(denom, 1e-8);
+      const impulse = mul(normal, normalImpulse);
+      a.vx -= impulse.x * a.invMass;
+      a.vy -= impulse.y * a.invMass;
+      a.omega -= cross(ra, impulse) * a.invInertia;
+      b.vx += impulse.x * b.invMass;
+      b.vy += impulse.y * b.invMass;
+      b.omega += cross(rb, impulse) * b.invInertia;
+    }
+
+    // Coulomb friction is applied only at an actual contact, never while a die
+    // is merely moving across the screen.
+    relative = sub(velocityAt(b, point), velocityAt(a, point));
+    const tangentVelocity = sub(relative, mul(normal, dot(relative, normal)));
+    const tangentLength = length(tangentVelocity);
+    if (tangentLength > 1e-7 && normalImpulse > 0) {
+      const tangent = mul(tangentVelocity, 1 / tangentLength);
+      const raT = cross(ra, tangent), rbT = cross(rb, tangent);
+      const denomT = a.invMass + b.invMass + raT * raT * a.invInertia + rbT * rbT * b.invInertia;
+      let jt = -dot(relative, tangent) / Math.max(denomT, 1e-8);
+      jt = clamp(jt, -CONTACT_FRICTION * normalImpulse, CONTACT_FRICTION * normalImpulse);
+      const frictionImpulse = mul(tangent, jt);
+      a.vx -= frictionImpulse.x * a.invMass;
+      a.vy -= frictionImpulse.y * a.invMass;
+      a.omega -= cross(ra, frictionImpulse) * a.invInertia;
+      b.vx += frictionImpulse.x * b.invMass;
+      b.vy += frictionImpulse.y * b.invMass;
+      b.omega += cross(rb, frictionImpulse) * b.invInertia;
+    }
+  }
+
+  function solvePair(a, b, correctPosition) {
+    const collision = satCollision(a, b);
+    if (!collision) return;
+    a.touching = b.touching = true;
+
+    if (correctPosition) {
+      const amount = Math.max(collision.penetration - POSITION_SLOP, 0) * POSITION_CORRECTION /
+        (a.invMass + b.invMass);
+      a.x -= collision.normal.x * amount * a.invMass;
+      a.y -= collision.normal.y * amount * a.invMass;
+      b.x += collision.normal.x * amount * b.invMass;
+      b.y += collision.normal.y * amount * b.invMass;
+    }
+    for (const point of collision.contacts) applyPairImpulse(a, b, point, collision.normal);
+  }
+
+  function applyWallImpulse(body, point, normal) {
+    const r = { x: point.x - body.x, y: point.y - body.y };
+    let v = velocityAt(body, point);
+    const vn = dot(v, normal);
+    let normalImpulse = 0;
+    if (vn < 0) {
+      const rn = cross(r, normal);
+      const denom = body.invMass + rn * rn * body.invInertia;
+      const restitution = vn < -34 ? WALL_RESTITUTION : 0;
+      normalImpulse = -(1 + restitution) * vn / Math.max(denom, 1e-8);
+      const impulse = mul(normal, normalImpulse);
+      body.vx += impulse.x * body.invMass;
+      body.vy += impulse.y * body.invMass;
+      body.omega += cross(r, impulse) * body.invInertia;
+    }
+    if (normalImpulse > 0) {
+      v = velocityAt(body, point);
+      const tangent = { x: -normal.y, y: normal.x };
+      const rt = cross(r, tangent);
+      const denomT = body.invMass + rt * rt * body.invInertia;
+      let jt = -dot(v, tangent) / Math.max(denomT, 1e-8);
+      jt = clamp(jt, -CONTACT_FRICTION * normalImpulse, CONTACT_FRICTION * normalImpulse);
+      const frictionImpulse = mul(tangent, jt);
+      body.vx += frictionImpulse.x * body.invMass;
+      body.vy += frictionImpulse.y * body.invMass;
+      body.omega += cross(r, frictionImpulse) * body.invInertia;
+    }
+  }
+
+  function solveWalls(body, correctPosition) {
+    // Transform the rounded polygon once, then reuse it for all four walls.
+    const vertices = worldVertices(body);
+    for (const side of WALLS) {
+      let extreme = side.sign < 0 ? Infinity : -Infinity;
+      for (const p of vertices) {
+        const value = side.axis === 0 ? p.x : p.y;
+        extreme = side.sign < 0 ? Math.min(extreme, value) : Math.max(extreme, value);
+      }
+
+      const limit = side.limit === 'width' ? width
+        : side.limit === 'height' ? height : 0;
+      const penetration = side.sign < 0 ? limit - extreme : extreme - limit;
+      if (penetration <= 0) continue;
+
+      let sumX = 0, sumY = 0, count = 0;
+      for (const p of vertices) {
+        const value = side.axis === 0 ? p.x : p.y;
+        if (Math.abs(value - extreme) < 1.2) {
+          sumX += p.x; sumY += p.y; count++;
+        }
+      }
+      const avgX = sumX / Math.max(1, count);
+      const avgY = sumY / Math.max(1, count);
+      const point = side.axis === 0
+        ? { x: limit, y: avgY }
+        : { x: avgX, y: limit };
+
+      body.touching = true;
+      if (correctPosition) {
+        const correction = Math.max(penetration - POSITION_SLOP, 0) * POSITION_CORRECTION;
+        const dx = side.normal.x * correction;
+        const dy = side.normal.y * correction;
+        body.x += dx; body.y += dy;
+        // Keep the already transformed vertices coherent after positional correction.
+        for (const p of vertices) { p.x += dx; p.y += dy; }
+      }
+      applyWallImpulse(body, point, side.normal);
+    }
+  }
+
+  function updateGravity(now) {
+    // a_relative = gravity - a_phone = -specific_force.
+    // DeviceMotion's x/y axes are right/up in the device's standard frame;
+    // on the canvas, x is right and y is down. The sensor handler performs
+    // the sign and screen-orientation conversion before storing the sample.
+    const fresh = sensorSeen && now - lastSensorTime <= 1200;
+    let x = fresh ? sensorInstant.x : DEFAULT_GRAVITY.x;
+    let y = fresh ? sensorInstant.y : DEFAULT_GRAVITY.y;
+
+    // Reject only impossible/extreme sensor spikes. There is deliberately no
+    // low-pass filter, reduced gain, gravity cap, or die-speed cap.
+    const magnitude = Math.hypot(x, y);
+    if (magnitude > MAX_SENSOR_ACCELERATION) {
+      const factor = MAX_SENSOR_ACCELERATION / magnitude;
+      x *= factor; y *= factor;
+    }
+    gravityNow.x = x * GRAVITY_SCALE;
+    gravityNow.y = y * GRAVITY_SCALE;
+  }
+
+  function physicsStep(dt) {
+    for (const body of dice) {
+      body.touching = false;
+      body.vx += gravityNow.x * dt;
+      body.vy += gravityNow.y * dt;
+      body.x += body.vx * dt;
+      body.y += body.vy * dt;
+      body.angle = (body.angle + body.omega * dt) % TAU;
+    }
+
+    // Sequential impulses handle simultaneous wall, corner, and die contacts.
+    for (let iteration = 0; iteration < 4; iteration++) {
+      for (const body of dice) solveWalls(body, iteration === 0);
+      solvePair(dice[0], dice[1], iteration === 0);
+    }
+  }
+
+  function faceUpValue(body) {
+    // Side order clockwise from the top: 1, 2, 4, 3.
+    const sides = [
+      { x: 0, y: -1, value: 1 },
+      { x: 1, y: 0, value: 2 },
+      { x: 0, y: 1, value: 4 },
+      { x: -1, y: 0, value: 3 }
+    ];
+    let best = sides[0], bestUp = Infinity;
+    const c = Math.cos(body.angle), s = Math.sin(body.angle);
+    for (const side of sides) {
+      const worldY = side.x * s + side.y * c;
+      if (worldY < bestUp) { bestUp = worldY; best = side; }
+    }
+    return best.value;
+  }
+
+  function drawDie(body) {
+    const half = dieSize / 2;
+    const radius = dieRadius;
+    ctx.save();
+    ctx.translate(body.x, body.y);
+    ctx.rotate(body.angle);
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(28, 38, 48, .22)';
+    ctx.shadowBlur = dieSize * 0.11;
+    ctx.shadowOffsetY = dieSize * 0.035;
+    const face = ctx.createLinearGradient(-half, -half, half, half);
+    face.addColorStop(0, body.colorSeed ? '#ffffff' : '#fffefa');
+    face.addColorStop(1, body.colorSeed ? '#e7ebef' : '#e9e8e2');
+    ctx.fillStyle = face;
+    ctx.beginPath();
+    ctx.roundRect(-half, -half, dieSize, dieSize, radius);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.lineWidth = Math.max(1.1, dieSize * 0.018);
+    ctx.strokeStyle = 'rgba(55, 66, 77, .22)';
+    ctx.beginPath();
+    ctx.roundRect(-half, -half, dieSize, dieSize, radius);
+    ctx.stroke();
+
+    ctx.lineWidth = Math.max(0.8, dieSize * 0.009);
+    ctx.strokeStyle = 'rgba(255,255,255,.9)';
+    ctx.beginPath();
+    ctx.roundRect(-half + 3, -half + 3, dieSize - 6, dieSize - 6, Math.max(3, radius - 2));
+    ctx.stroke();
+
+    // Four side markings. Their positions rotate with the body; the glyphs
+    // stay screen-upright so all four values remain legible while tumbling.
+    const markFont = Math.max(9, dieSize * 0.115);
+    const marks = [
+      { x: 0, y: -half * 0.67, value: '1' },
+      { x: half * 0.67, y: 0, value: '2' },
+      { x: 0, y: half * 0.67, value: '4' },
+      { x: -half * 0.67, y: 0, value: '3' }
+    ];
+    ctx.fillStyle = 'rgba(91, 103, 115, .68)';
+    ctx.font = `600 ${markFont}px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const mark of marks) {
+      ctx.save();
+      ctx.translate(mark.x, mark.y);
+      ctx.rotate(-body.angle);
+      ctx.fillText(mark.value, 0, 0);
+      ctx.restore();
+    }
+
+    // The numeral at the center is the side facing upward against gravity.
+    // Keeping it upright makes the settled result readable at a glance.
+    ctx.save();
+    ctx.rotate(-body.angle);
+    ctx.fillStyle = '#26313b';
+    ctx.font = `700 ${dieSize * 0.43}px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(faceUpValue(body)), 0, dieSize * 0.015);
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  function render() {
+    ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    ctx.fillStyle = '#eef1f4';
+    ctx.fillRect(0, 0, width, height);
+    for (const body of dice) drawDie(body);
+  }
+
+  function screenAngle() {
+    let angle = 0;
+    if (screen.orientation && Number.isFinite(screen.orientation.angle)) angle = screen.orientation.angle;
+    else if (Number.isFinite(window.orientation)) angle = window.orientation;
+    return ((angle % 360) + 360) % 360;
+  }
+
+  function rotateSensorAxesToScreen(x, y) {
+    // DeviceMotion's x/y axes are tied to the device's natural coordinate
+    // frame. Rotate them into the currently locked screen orientation.
+    const angle = screenAngle();
+    if (angle === 90) return { x: y, y: -x };
+    if (angle === 180) return { x: -x, y: -y };
+    if (angle === 270) return { x: -y, y: x };
+    return { x, y };
+  }
+
+  function onDeviceMotion(event) {
+    const a = event && event.accelerationIncludingGravity;
+    if (!a || !Number.isFinite(a.x) || !Number.isFinite(a.y)) return;
+    const aligned = rotateSensorAxesToScreen(a.x, a.y);
+    // At rest, accelerationIncludingGravity points opposite actual gravity.
+    // Canvas y increases downward, hence (-x, +y) gives screen-plane gravity.
+    // In the DeviceMotion coordinate convention, x is screen-right and y is
+    // screen-up. Canvas y points downward. Negating the accelerometer's
+    // specific-force vector therefore gives (gravity - phone acceleration)
+    // as (-x, +y) in canvas coordinates.
+    sensorInstant.x = -aligned.x;
+    sensorInstant.y = aligned.y;
+    sensorSeen = true;
+    lastSensorTime = performance.now();
+    updateGravity(lastSensorTime); // take effect on the very next rendered frame
+  }
+
+  function showPermissionPrompt() {
+    permissionButton.classList.add('visible');
+  }
+
+  function hidePermissionPrompt() {
+    permissionButton.classList.remove('visible');
+  }
+
+  async function requestMotionPermission() {
+    if (motionPermissionPending) return;
+    motionPermissionPending = true;
+    permissionButton.textContent = 'Enabling…';
+    try {
+      const result = await window.DeviceMotionEvent.requestPermission();
+      if (result === 'granted') {
+        window.addEventListener('devicemotion', onDeviceMotion, { passive: true });
+        hidePermissionPrompt();
+      } else {
+        permissionButton.textContent = 'Motion unavailable';
+      }
+    } catch (_) {
+      permissionButton.textContent = 'Motion unavailable';
+    } finally {
+      motionPermissionPending = false;
+    }
+  }
+
+  function startMotionSensing() {
+    if (typeof window.DeviceMotionEvent !== 'undefined' &&
+        typeof window.DeviceMotionEvent.requestPermission === 'function') {
+      showPermissionPrompt();
+      permissionButton.addEventListener('click', requestMotionPermission, { once: true });
+    } else {
+      window.addEventListener('devicemotion', onDeviceMotion, { passive: true });
+    }
+  }
+
+  function worldToLocal(body, point) {
+    const dx = point.x - body.x, dy = point.y - body.y;
+    const c = Math.cos(body.angle), s = Math.sin(body.angle);
+    return { x: dx * c + dy * s, y: -dx * s + dy * c };
+  }
+
+  function roundedSquareDistanceAndNormal(local) {
+    const half = dieSize / 2;
+    const core = half - dieRadius;
+    const qx = Math.abs(local.x) - core;
+    const qy = Math.abs(local.y) - core;
+    const ox = Math.max(qx, 0), oy = Math.max(qy, 0);
+    let normal;
+    const outsideLength = Math.hypot(ox, oy);
+    if (outsideLength > 1e-8) {
+      normal = {
+        x: Math.sign(local.x || 1) * ox / outsideLength,
+        y: Math.sign(local.y || 1) * oy / outsideLength
+      };
+    } else if (qx > qy) {
+      normal = { x: Math.sign(local.x || 1), y: 0 };
+    } else {
+      normal = { x: 0, y: Math.sign(local.y || 1) };
+    }
+    const distance = outsideLength + Math.min(Math.max(qx, qy), 0) - dieRadius;
+    return { distance, normal };
+  }
+
+  function surfaceAtPoint(body, point) {
+    const local = worldToLocal(body, point);
+    const info = roundedSquareDistanceAndNormal(local);
+    const boundaryLocal = sub(local, mul(info.normal, info.distance));
+    const boundaryOffset = rotate(boundaryLocal, body.angle);
+    const worldNormal = rotate(info.normal, body.angle);
+    return {
+      point: { x: body.x + boundaryOffset.x, y: body.y + boundaryOffset.y },
+      normal: worldNormal
+    };
+  }
+
+  function applyPointerImpulse(body, contact, inwardDirection, speed) {
+    const direction = normalize(inwardDirection);
+    const impulseMagnitude = body.mass * clamp(speed, 105, 1050);
+    const impulse = mul(direction, impulseMagnitude);
+    const r = { x: contact.x - body.x, y: contact.y - body.y };
+    body.vx += impulse.x * body.invMass;
+    body.vy += impulse.y * body.invMass;
+    body.omega += cross(r, impulse) * body.invInertia;
+  }
+
+  function pointInsideBody(body, point) {
+    return roundedSquareDistanceAndNormal(worldToLocal(body, point)).distance <= 0;
+  }
+
+  function segmentEntry(body, from, to) {
+    const steps = Math.max(8, Math.ceil(length(sub(to, from)) / (dieSize * 0.12)));
+    let previousT = 0;
+    let wasInside = pointInsideBody(body, from);
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const p = { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
+      const inside = pointInsideBody(body, p);
+      if (inside && !wasInside) {
+        let lo = previousT, hi = t;
+        for (let j = 0; j < 12; j++) {
+          const mid = (lo + hi) * 0.5;
+          const q = { x: from.x + (to.x - from.x) * mid, y: from.y + (to.y - from.y) * mid };
+          if (pointInsideBody(body, q)) hi = mid; else lo = mid;
+        }
+        const hit = { x: from.x + (to.x - from.x) * hi, y: from.y + (to.y - from.y) * hi };
+        return hit;
+      }
+      wasInside = inside;
+      previousT = t;
+    }
+    return null;
+  }
+
+  function pointerKickAt(body, point, pointerVelocity, isTap) {
+    const surface = surfaceAtPoint(body, point);
+    const inward = mul(surface.normal, -1);
+    let normalSpeed = pointerVelocity ? -dot(pointerVelocity, surface.normal) : 0;
+    if (isTap) normalSpeed = 260;
+    else if (normalSpeed < 35) return;
+    applyPointerImpulse(body, surface.point, inward, isTap ? 260 : Math.max(140, normalSpeed * 0.78));
+    body.touching = false;
+  }
+
+  function pointerPosition(event) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+
+  function onPointerDown(event) {
+    if (event.button !== undefined && event.button !== 0) return;
+    const p = pointerPosition(event);
+    const now = performance.now();
+    activePointer = { id: event.pointerId, point: p, time: now };
+    try { canvas.setPointerCapture(event.pointerId); } catch (_) {}
+    // A tap is a single localized impulse, never a grab.
+    for (let i = dice.length - 1; i >= 0; i--) {
+      if (pointInsideBody(dice[i], p)) {
+        pointerKickAt(dice[i], p, null, true);
+        break;
+      }
+    }
+    event.preventDefault();
+  }
+
+  function onPointerMove(event) {
+    if (!activePointer || activePointer.id !== event.pointerId) return;
+    const p = pointerPosition(event);
+    const now = performance.now();
+    const elapsed = Math.max(0.008, (now - activePointer.time) / 1000);
+    const delta = sub(p, activePointer.point);
+    const pointerVelocity = mul(delta, 1 / elapsed);
+    for (const body of dice) {
+      const hit = segmentEntry(body, activePointer.point, p);
+      if (hit) pointerKickAt(body, hit, pointerVelocity, false);
+    }
+    activePointer.point = p;
+    activePointer.time = now;
+    event.preventDefault();
+  }
+
+  function endPointer(event) {
+    if (activePointer && (event.pointerId === undefined || activePointer.id === event.pointerId)) {
+      activePointer = null;
+    }
+  }
+
+  function animate(time) {
+    if (!lastFrameTime) lastFrameTime = time;
+    const elapsed = Math.min(MAX_FRAME_TIME, Math.max(0, (time - lastFrameTime) / 1000));
+    lastFrameTime = time;
+
+    if (elapsed > 0) {
+      updateGravity(time);
+      let maxSpeed = 0;
+      for (const body of dice) maxSpeed = Math.max(maxSpeed, Math.hypot(body.vx, body.vy));
+      const acceleration = Math.hypot(gravityNow.x, gravityNow.y);
+      const estimatedTravel = maxSpeed * elapsed + 0.5 * acceleration * elapsed * elapsed;
+      const distanceStep = Math.max(12, dieSize * MAX_TRAVEL_PER_STEP);
+      const steps = Math.max(
+        1,
+        Math.ceil(elapsed / MAX_STEP_TIME),
+        Math.ceil(estimatedTravel / distanceStep)
+      );
+      const step = elapsed / steps;
+      for (let i = 0; i < steps; i++) physicsStep(step);
+    }
+
+    render();
+    requestAnimationFrame(animate);
+  }
+
+  window.addEventListener('resize', resize, { passive: true });
+  window.addEventListener('orientationchange', () => {
+    setTimeout(resize, 120);
+  }, { passive: true });
+  canvas.addEventListener('pointerdown', onPointerDown, { passive: false });
+  window.addEventListener('pointermove', onPointerMove, { passive: false });
+  window.addEventListener('pointerup', endPointer, { passive: true });
+  window.addEventListener('pointercancel', endPointer, { passive: true });
+  window.addEventListener('blur', () => { activePointer = null; }, { passive: true });
+
+  resize();
+  startMotionSensing();
+  requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>
