@@ -1,0 +1,1035 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polygon Billiards</title>
+<style>
+:root{
+  --bg:#f4f1ea; --panel:#fbf9f4; --ink:#22262b; --muted:#6b7078; --line:#d9d3c5; --field:#ffffff;
+  --accent:#b5502b; --accent-ink:#ffffff; --good:#2c7a4b; --warn:#a86a00; --bad:#b3261e;
+  --poly-fill:rgba(181,80,43,.07); --poly-stroke:#22262b; --canvas:#fffdf8;
+  --p0:#1f8a4c; --p1:#2159c4; --stop:#c62828; --dark:0;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#15171a; --panel:#1c1f23; --ink:#e6e3dc; --muted:#8f949c; --line:#32363c; --field:#111316;
+    --accent:#e2784f; --accent-ink:#1a1008; --good:#59c283; --warn:#e0a23a; --bad:#ef6f66;
+    --poly-fill:rgba(226,120,79,.10); --poly-stroke:#e6e3dc; --canvas:#101215;
+    --p0:#4fd08a; --p1:#6f9bff; --stop:#ff6b6b; --dark:1;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:grid;grid-template-columns:416px 1fr;overflow:hidden}
+aside{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;padding:8px 16px 28px}
+main{position:relative;min-width:0;min-height:0}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block;background:var(--canvas)}
+h2{font:600 11px/1 ui-sans-serif,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:18px 0 8px;padding-top:12px;border-top:1px solid var(--line)}
+aside>h2:first-child{margin-top:6px;padding-top:0;border-top:0}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0}
+button{font:inherit;padding:5px 11px;border:1px solid var(--line);background:var(--field);color:var(--ink);border-radius:6px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button.mini{padding:1px 7px;line-height:1.3;color:var(--muted)}
+input,select{font:inherit;color:var(--ink);background:var(--field);border:1px solid var(--line);border-radius:5px;padding:3px 6px;min-width:0}
+input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+input.num{width:100%;font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+input.bad{border-color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,var(--field))}
+input.warn{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,var(--field))}
+label.inl{display:inline-flex;align-items:center;gap:6px;color:var(--muted)}
+label.inl input{width:78px}
+label.inl.s input{width:56px}
+table{border-collapse:collapse;width:100%}
+th{font-weight:600;font-size:11px;color:var(--muted);text-align:left;padding:0 3px 3px}
+td{padding:2px 3px;vertical-align:middle}
+td.idx{color:var(--muted);width:20px;font-variant-numeric:tabular-nums}
+td.len{color:var(--muted);font-size:11px;width:54px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.grid4{display:grid;grid-template-columns:34px repeat(4,1fr);gap:4px 5px;align-items:center}
+.grid4 .h{font-size:11px;color:var(--muted);font-weight:600}
+.grid4 .t{color:var(--muted);font-variant-numeric:tabular-nums}
+.info{font-size:12px;color:var(--muted);margin-top:6px}
+.info div{margin:2px 0}
+.ok{color:var(--good)} .wn{color:var(--warn)} .er{color:var(--bad)}
+.status{margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field);font-size:12px}
+.status div{margin:2px 0}
+details{margin-top:8px}
+summary{cursor:pointer;color:var(--muted);font-size:12px}
+pre{margin:6px 0 0;max-height:240px;overflow:auto;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--field);border:1px solid var(--line);border-radius:6px;padding:8px;white-space:pre}
+.hud{position:absolute;left:10px;bottom:8px;font:11px ui-monospace,Menlo,Consolas,monospace;color:var(--muted);pointer-events:none;background:color-mix(in srgb,var(--canvas) 80%,transparent);padding:2px 6px;border-radius:4px}
+.legend{position:absolute;right:10px;top:8px;font-size:11px;color:var(--muted);pointer-events:none;background:color-mix(in srgb,var(--canvas) 82%,transparent);padding:5px 8px;border-radius:6px;line-height:1.7}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+.hint{color:var(--muted);font-size:11.5px;margin:4px 0 0}
+.hint:empty{display:none}
+.hint.er{color:var(--bad)}
+code{font:11.5px ui-monospace,Menlo,Consolas,monospace}
+@media (max-width:860px){
+  body{grid-template-columns:1fr;grid-template-rows:56vh auto;overflow:auto}
+  main{order:-1}
+  aside{border-right:0;border-top:1px solid var(--line);overflow:visible}
+}
+</style>
+</head>
+<body>
+<aside>
+  <h2>Polygon · edges at k·30°, length A + B√3</h2>
+  <div class="row">
+    <label class="inl">shape <select id="shape" title="Load a preset shape (the edge table below shows its edges)"></select></label>
+    <label class="inl s">scale <input id="polyScale" class="num" value="1" inputmode="numeric"></label>
+  </div>
+  <div class="row">
+    <button id="btnPolyRand" title="Random polygon: a random walk that stops when it touches itself; the closed loop is kept.">Randomize</button>
+  </div>
+  <div class="row">
+    <label class="inl s" title="Each random edge: B is a multiple of 4 with |B| at most this value">max |B| <input id="rpMaxB" class="num" value="8" inputmode="numeric"></label>
+    <label class="inl s" title="Each random edge: A is a multiple of 4 with 0 &lt; A + B√3 at most this value">max length <input id="rpMaxLen" class="num" value="16" inputmode="numeric"></label>
+    <label class="inl s" title="Reject loops with fewer edges (3 allows triangles)">min edges <input id="rpMinEdges" class="num" value="4" inputmode="numeric"></label>
+  </div>
+  <div class="hint" id="genNote"></div>
+  <table>
+    <thead><tr><th></th><th>direction</th><th>A</th><th>B</th><th>≈ length</th><th></th></tr></thead>
+    <tbody id="edgeBody"></tbody>
+  </table>
+  <div class="row"><button id="btnAddEdge" class="mini">+ add edge</button></div>
+  <div class="info" id="polyInfo"></div>
+  <details><summary>Exact vertices</summary><pre id="vertLog"></pre></details>
+
+  <h2>Billiard ball · x = Ax + Bx√3, y = Ay + By√3</h2>
+  <div class="row">
+    <label class="inl s" title="Positions are multiplied by this integer (same as multiplying every A and B by it)">scale <input id="ballScale" class="num" value="1" inputmode="numeric"></label>
+  </div>
+  <div class="row">
+    <button id="btnBallRand" title="Random t=0 and t=1 points strictly inside the polygon">Randomize</button>
+  </div>
+  <div class="row">
+    <label class="inl s" title="B is even with |B| at most this value; A is then chosen uniformly among all even values that keep the point inside the polygon's bounding box (divided by the scale)">max |B| <input id="ballMaxB" class="num" value="6" inputmode="numeric"></label>
+  </div>
+  <div class="hint" id="ballNote"></div>
+  <div class="grid4" id="ballGrid">
+    <span></span><span class="h">Ax</span><span class="h">Bx</span><span class="h">Ay</span><span class="h">By</span>
+    <span class="t">t=0</span>
+    <input class="num" id="p0Ax" inputmode="numeric"><input class="num" id="p0Bx" inputmode="numeric">
+    <input class="num" id="p0Ay" inputmode="numeric"><input class="num" id="p0By" inputmode="numeric">
+    <span class="t">t=1</span>
+    <input class="num" id="p1Ax" inputmode="numeric"><input class="num" id="p1Bx" inputmode="numeric">
+    <input class="num" id="p1Ay" inputmode="numeric"><input class="num" id="p1By" inputmode="numeric">
+  </div>
+  <p class="hint">If a wall lies between the two points, the t=1 point is treated as an <b>image point</b>: it only fixes the velocity, and the real t=1 position comes from the bounce.</p>
+  <div class="info" id="ballInfo"></div>
+
+  <h2>Simulation &amp; plot</h2>
+  <div class="row">
+    <label class="inl">max t <input id="maxT" class="num" value="300" inputmode="numeric"></label>
+    <label class="inl">step <input id="stepT" class="num" value="1" inputmode="numeric" title="Plot / list every this many time units (affects only the points and the list)"></label>
+  </div>
+  <div class="hint er" id="stepNote"></div>
+  <div class="row">
+    <label class="inl">draw
+      <select id="mode"><option value="line">continuous line</option><option value="points">discrete points</option><option value="both">line + points</option></select>
+    </label>
+  </div>
+  <div class="status" id="status">…</div>
+  <details><summary>Exact positions at plotted times</summary><pre id="log"></pre></details>
+</aside>
+<main>
+  <canvas id="cv"></canvas>
+  <div class="legend">
+    <i style="background:var(--p0)"></i>t = 0<br>
+    <i style="background:var(--p1)"></i>t = 1 (real)<br>
+    <i style="background:transparent;border:2px solid var(--p1);width:6px;height:6px"></i>t = 1 image point<br>
+    <i style="background:var(--stop);border-radius:0;transform:rotate(45deg)"></i>vertex hit
+  </div>
+  <div class="hud" id="hud"></div>
+</main>
+<script>
+
+// ============================================================================
+//  Exact arithmetic in Q(√3) using BigInt.   value = (a + b·√3) / n,  n > 0
+//  "raw" operations skip gcd-reduction (cheap); norm()/mk() reduce to canonical form.
+// ============================================================================
+"use strict";
+
+class Q { constructor(a, b, n) { this.a = a; this.b = b; this.n = n; } }
+
+function bgcd(a, b) {
+  if (a < 0n) a = -a; if (b < 0n) b = -b;
+  while (b !== 0n) { const t = a % b; a = b; b = t; }
+  return a;
+}
+function mk(a, b = 0n, n = 1n) {            // canonical (reduced, n>0)
+  if (n < 0n) { a = -a; b = -b; n = -n; }
+  if (n !== 1n) { const g = bgcd(bgcd(a, b), n); if (g > 1n) { a /= g; b /= g; n /= g; } }
+  return new Q(a, b, n);
+}
+const norm = (x) => (x.n === 1n ? x : mk(x.a, x.b, x.n));
+const qint = (a, b = 0n) => new Q(BigInt(a), BigInt(b), 1n);
+const Q0 = new Q(0n, 0n, 1n), Q1 = new Q(1n, 0n, 1n);
+
+function qadd(x, y) {
+  return x.n === y.n ? new Q(x.a + y.a, x.b + y.b, x.n)
+    : new Q(x.a * y.n + y.a * x.n, x.b * y.n + y.b * x.n, x.n * y.n);
+}
+function qsub(x, y) {
+  return x.n === y.n ? new Q(x.a - y.a, x.b - y.b, x.n)
+    : new Q(x.a * y.n - y.a * x.n, x.b * y.n - y.b * x.n, x.n * y.n);
+}
+function qmul(x, y) { return new Q(x.a * y.a + 3n * x.b * y.b, x.a * y.b + x.b * y.a, x.n * y.n); }
+function qneg(x) { return new Q(-x.a, -x.b, x.n); }
+function qinv(x) {                          // n / (a+b√3) = n(a-b√3)/(a²-3b²)
+  const d = x.a * x.a - 3n * x.b * x.b;
+  if (d === 0n) throw new Error("division by zero in Q(√3)");
+  const a = x.n * x.a, b = -x.n * x.b;
+  return d > 0n ? new Q(a, b, d) : new Q(-a, -b, -d);
+}
+const qdiv = (x, y) => qmul(x, qinv(y));
+
+// exact sign of (a + b√3)/n  (n>0): compares a² with 3b² when signs differ
+function qsign(x) {
+  const a = x.a, b = x.b;
+  if (b === 0n) return a > 0n ? 1 : a < 0n ? -1 : 0;
+  if (a === 0n) return b > 0n ? 1 : -1;
+  if (a > 0n && b > 0n) return 1;
+  if (a < 0n && b < 0n) return -1;
+  const a2 = a * a, b2 = 3n * b * b;
+  return a > 0n ? (a2 > b2 ? 1 : -1) : (b2 > a2 ? 1 : -1);
+}
+const qcmp = (x, y) => qsign(qsub(x, y));
+const qeq = (x, y) => x.a === y.a && x.b === y.b && x.n === y.n;   // canonical forms only
+const qiszero = (x) => x.a === 0n && x.b === 0n;
+
+// ---- conversion to double (only used for plotting / display) ----
+function isqrt(n) { let x = 1n << BigInt((n.toString(2).length >> 1) + 1); for (;;) { const y = (x + n / x) >> 1n; if (y >= x) return x; x = y; } }
+const SQ3 = Math.sqrt(3), P30 = 10n ** 30n, S30 = isqrt(3n * P30 * P30);
+function qf(q) {
+  const fa = Number(q.a), fb = Number(q.b), fn = Number(q.n);
+  if (Math.abs(fa) + 2 * Math.abs(fb) <= 4e6 * fn) return (fa + fb * SQ3) / fn;   // no heavy cancellation
+  return Number(q.a * P30 + q.b * S30) / Number(q.n * P30);                      // high-precision path
+}
+
+// ---- text formatting ----
+function fmtQ(q) {
+  const { a, b, n } = q; let s = "";
+  if (a !== 0n) s += a.toString();
+  if (b !== 0n) {
+    const ab = b < 0n ? -b : b, t = (ab === 1n ? "" : ab.toString()) + "√3";
+    s = s === "" ? (b < 0n ? "-" : "") + t : s + (b < 0n ? " - " : " + ") + t;
+  }
+  if (s === "") s = "0";
+  if (n !== 1n) s = (a !== 0n && b !== 0n) ? "(" + s + ")/" + n : s + "/" + n;
+  return s;
+}
+const fmtV = (v) => "(" + fmtQ(v[0]) + ", " + fmtQ(v[1]) + ")";
+
+// ---- 2-vectors as [x, y] of Q ----
+const vadd = (u, v) => [qadd(u[0], v[0]), qadd(u[1], v[1])];
+const vsub = (u, v) => [qsub(u[0], v[0]), qsub(u[1], v[1])];
+const vneg = (u) => [qneg(u[0]), qneg(u[1])];
+const vnorm = (u) => [norm(u[0]), norm(u[1])];
+const vcross = (u, v) => qsub(qmul(u[0], v[1]), qmul(u[1], v[0]));
+const vdot = (u, v) => qadd(qmul(u[0], v[0]), qmul(u[1], v[1]));
+const vscale = (k, u) => [qmul(k, u[0]), qmul(k, u[1])];
+const vfloat = (u) => [qf(u[0]), qf(u[1])];
+
+// ---- direction tables: unit vectors at k·30°, and reflection data for walls at k·30° ----
+const HALF = new Q(1n, 0n, 2n), SQH = new Q(0n, 1n, 2n);            // 1/2 and √3/2
+const mHALF = qneg(HALF), mSQH = qneg(SQH), mQ1 = qneg(Q1);
+const COS30 = [Q1, SQH, HALF, Q0, mHALF, mSQH, mQ1, mSQH, mHALF, Q0, HALF, SQH];
+const SIN30 = [Q0, HALF, SQH, Q1, SQH, HALF, Q0, mHALF, mSQH, mQ1, mSQH, mHALF];
+const COS60 = [Q1, HALF, mHALF, mQ1, mHALF, HALF];                  // cos(2θ), θ = k·30°, k mod 6
+const SIN60 = [Q0, SQH, SQH, Q0, mSQH, mSQH];                       // sin(2θ)
+
+function parseBig(str) {                     // integer text -> BigInt, or null
+  const s = String(str).trim();
+  return /^[+-]?\d+$/.test(s) ? BigInt(s) : null;
+}
+
+// ============================================================================
+//  Polygon: exact vertices, closure / simplicity / orientation, wedge + point tests
+// ============================================================================
+const minQ = (a, b) => (qcmp(a, b) <= 0 ? a : b), maxQ = (a, b) => (qcmp(a, b) >= 0 ? a : b);
+const orient3 = (a, b, c) => qsign(vcross(vsub(b, a), vsub(c, a)));
+function onSeg(a, b, p) {                    // p assumed collinear with a-b
+  return qcmp(p[0], minQ(a[0], b[0])) >= 0 && qcmp(p[0], maxQ(a[0], b[0])) <= 0 &&
+         qcmp(p[1], minQ(a[1], b[1])) >= 0 && qcmp(p[1], maxQ(a[1], b[1])) <= 0;
+}
+function segInter(a, b, c, d) {              // closed segments, exact
+  const o1 = orient3(a, b, c), o2 = orient3(a, b, d), o3 = orient3(c, d, a), o4 = orient3(c, d, b);
+  if (o1 * o2 < 0 && o3 * o4 < 0) return true;
+  return (o1 === 0 && onSeg(a, b, c)) || (o2 === 0 && onSeg(a, b, d)) ||
+         (o3 === 0 && onSeg(c, d, a)) || (o4 === 0 && onSeg(c, d, b));
+}
+
+// specs: [{k: direction index (angle = 30°·k), A: BigInt, B: BigInt}]  (length = A + B√3), S: BigInt scale
+function buildPolygon(specs, S) {
+  const Sb = BigInt(S), edges = [];
+  let cur = [Q0, Q0]; const verts = [cur];
+  for (const sp of specs) {
+    const k = ((sp.k % 12) + 12) % 12;
+    const L = mk(sp.A * Sb, sp.B * Sb, 1n);
+    const e = [norm(qmul(L, COS30[k])), norm(qmul(L, SIN30[k]))];
+    if (qiszero(e[0]) && qiszero(e[1])) continue;           // zero-length edge: ignored
+    const B = vnorm(vadd(cur, e));
+    edges.push({ k, A: cur, B, e, c: COS60[k % 6], s: SIN60[k % 6] });
+    cur = B; verts.push(B);
+  }
+  const m = edges.length;
+  const gap = cur;                                           // end point minus start (start = origin)
+  const closed = m >= 3 && qiszero(cur[0]) && qiszero(cur[1]);
+  let area2 = Q0;
+  if (closed) for (let i = 0; i < m; i++) area2 = qadd(area2, vcross(verts[i], verts[i + 1]));
+  area2 = norm(area2);
+  const orient = closed ? qsign(area2) : 0;
+
+  let simple = m >= 2;
+  for (let i = 0; i < m && simple; i++) for (let j = i + 1; j < m && simple; j++) {
+    const adj = j === i + 1 || (closed && i === 0 && j === m - 1);
+    if (adj) {
+      if (qsign(vcross(edges[i].e, edges[j].e)) === 0 && qsign(vdot(edges[i].e, edges[j].e)) < 0) simple = false;
+    } else if (segInter(edges[i].A, edges[i].B, edges[j].A, edges[j].B)) simple = false;
+  }
+
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const vf = verts.map(vfloat);
+  for (const [x, y] of vf) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  if (!isFinite(x0)) { x0 = y0 = 0; x1 = y1 = 1; }
+
+  const poly = { edges, verts, vf, m, closed, orient, area2, simple, gap, bbox: [x0, y0, x1, y1] };
+
+  // +1 strictly inside, -1 strictly outside, 0 on the boundary (closed polygons only)
+  poly.pointSide = function (P) {
+    if (!closed) return -1;
+    let inside = false;
+    for (const ed of edges) {
+      const cr = qsign(vcross(ed.e, vsub(P, ed.A)));
+      if (cr === 0 && onSeg(ed.A, ed.B, P)) return 0;
+      const ay = qcmp(ed.A[1], P[1]) > 0, by = qcmp(ed.B[1], P[1]) > 0;
+      if (ay !== by && (by ? cr > 0 : cr < 0)) inside = !inside;
+    }
+    return inside ? 1 : -1;
+  };
+
+  // Side of direction u at vertex i (start of edge i): +1 interior, -1 exterior, 0 along a wall / degenerate
+  poly.wedge = function (i, u) {
+    if (!closed || orient === 0) return 0;
+    const r1 = edges[i].e, r2 = vneg(edges[(i + m - 1) % m].e);
+    const c12 = qsign(vcross(r1, r2));
+    let side;                                                // relative to the CCW sector r1 -> r2
+    if (c12 > 0) {
+      const a = qsign(vcross(r1, u)), b = qsign(vcross(u, r2));
+      side = (a > 0 && b > 0) ? 1 : ((a === 0 && qsign(vdot(r1, u)) > 0) || (b === 0 && qsign(vdot(u, r2)) > 0)) ? 0 : -1;
+    } else if (c12 < 0) {
+      const a = qsign(vcross(r2, u)), b = qsign(vcross(u, r1));
+      side = (a > 0 && b > 0) ? -1 : ((a === 0 && qsign(vdot(r2, u)) > 0) || (b === 0 && qsign(vdot(u, r1)) > 0)) ? 0 : 1;
+    } else {
+      if (qsign(vdot(r1, r2)) > 0) return 0;                 // zero-angle spike
+      side = qsign(vcross(r1, u));                           // straight vertex: left half-plane
+    }
+    return side * orient;
+  };
+  return poly;
+}
+
+// ============================================================================
+//  Presets and randomisers
+// ============================================================================
+// Preset shapes, all counter-clockwise with the first edge along +x from the origin.  Each edge is [k, A, B]:
+// direction 30°·k, length A + B√3 (A, B multiples of 4, so every vertex lies in 2·Z[√3]²).
+const shapeSpecs = (rows) => rows.map(([k, A, B]) => ({ k, A: BigInt(A), B: BigInt(B) }));
+const SHAPES = [
+  // Cairo pentagon: the short edge 4(√3-1) comes first, then four edges of length 4.  Mirror axis: x = 2√3-2.
+  { name: "Cairo pentagon", specs: shapeSpecs([[0, -4, 4], [2, 4, 0], [5, 4, 0], [7, 4, 0], [10, 4, 0]]) },
+  { name: "Square", specs: shapeSpecs([[0, 8, 0], [3, 8, 0], [6, 8, 0], [9, 8, 0]]) },
+  { name: "Equilateral triangle", specs: shapeSpecs([[0, 8, 0], [4, 8, 0], [8, 8, 0]]) },
+  { name: "30-60-90 triangle", specs: shapeSpecs([[0, 0, 4], [3, 4, 0], [7, 8, 0]]) },               // legs 4√3 and 4, hypotenuse 8
+  { name: "Hexagon", specs: shapeSpecs([[0, 4, 0], [2, 4, 0], [4, 4, 0], [6, 4, 0], [8, 4, 0], [10, 4, 0]]) },
+  { name: "Dodecagon", specs: shapeSpecs(Array.from({ length: 12 }, (_, k) => [k, 4, 0])) },
+  { name: "L-shape", specs: shapeSpecs([[0, 16, 0], [3, 8, 0], [6, 8, 0], [3, 8, 0], [6, 8, 0], [9, 16, 0]]) },   // non-convex
+  { name: "Hurtle", specs: shapeSpecs([[ 0, 4, 0], [10, 4, 0], [ 1, 4, 0], [11, 4, 0], [ 2, 4, 0], [ 4, 4, 0], [ 1, 4, 0], [ 3, 4, 0], [ 6, 4, 0], [ 8, 4, 0], [ 5, 4, 0], [ 7, 4, 0], [ 7, 4, 0], [ 9, 4, 0]]) },
+];
+const CAIRO_SPECS = SHAPES[0].specs;
+
+const rnd = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));      // integer in [lo, hi]
+const lcm = (a, b) => (a / bgcd(a, b)) * b;
+const ballVec = (pt, Sb) => [mk(pt.Ax * Sb, pt.Bx * Sb), mk(pt.Ay * Sb, pt.By * Sb)];
+
+// ---------------------------------------------------------------------------
+//  Random ball point.  B first (even, |B| <= maxB); then A uniformly among ALL even A for which
+//  A + B√3 lies inside the (slightly enlarged) bounding box.  The exact inside-test decides the rest.
+// ---------------------------------------------------------------------------
+function randomBallPoint(poly, Sb, maxB) {
+  const [x0, y0, x1, y1] = poly.bbox, S = Number(Sb), nb = Math.floor(maxB / 2);
+  const comp = (lo, hi) => {
+    const eps = 1e-6 * (hi - lo);                                // enlarge the box: costs nothing, the exact test filters
+    lo = (lo - eps) / S; hi = (hi + eps) / S;
+    const B = 2 * rnd(-nb, nb);
+    const kMin = Math.ceil((lo - B * SQ3) / 2), kMax = Math.floor((hi - B * SQ3) / 2);   // A = 2k
+    return kMax < kMin ? null : [2 * rnd(kMin, kMax), B];
+  };
+  for (let t = 0; t < 4000; t++) {
+    const cx = comp(x0, x1), cy = comp(y0, y1); if (!cx || !cy) continue;
+    const pt = { Ax: BigInt(cx[0]), Bx: BigInt(cx[1]), Ay: BigInt(cy[0]), By: BigInt(cy[1]) };
+    if (!poly.closed || poly.pointSide(ballVec(pt, Sb)) === 1) return pt;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+//  Random polygon: random walk (directions k·30°) that stops the moment a new edge touches an earlier
+//  edge or vertex -- crossing, T-junction, end-point touch or collinear abutment all count (closed segments).
+//  Only the closed loop is kept; the loop starts at the contact point X, so the origin sits between the
+//  two trimmed edges.  Everything is exact; lengths are then scaled by the smallest common integer so that
+//  every length is A + B√3 with A, B multiples of 4.
+// ---------------------------------------------------------------------------
+function pickEdgeLength(maxB, maxLen) {          // B (multiple of 4, |B|<=maxB) first, then A (multiple of 4) with 0 < A+B√3 <= maxLen
+  const nb = Math.floor(maxB / 4), ML = qint(maxLen);
+  for (let t = 0; t < 500; t++) {
+    const B = 4 * rnd(-nb, nb);
+    let kMin = Math.ceil((-B * SQ3) / 4), kMax = Math.floor((maxLen - B * SQ3) / 4);       // A = 4k
+    while (kMin <= kMax && qsign(qint(4 * kMin, B)) <= 0) kMin++;                           // exact: length > 0
+    while (kMax >= kMin && qsign(qsub(ML, qint(4 * kMax, B))) < 0) kMax--;                  // exact: length <= maxLen
+    if (kMax >= kMin) return { A: 4 * rnd(kMin, kMax), B };
+  }
+  return null;
+}
+
+function walkLoop(maxB, maxLen, maxSteps = 400) {
+  const verts = [[Q0, Q0]], edges = [];
+  let prevK = -1;
+  for (let step = 0; step < maxSteps; step++) {
+    let k; do { k = rnd(0, 11); } while (prevK >= 0 && (k === prevK || k === (prevK + 6) % 12));   // no straight / reversed turn
+    const len = pickEdgeLength(maxB, maxLen); if (!len) return null;
+    const L = qint(len.A, len.B), v = vnorm(vscale(L, [COS30[k], SIN30[k]])), P = verts[verts.length - 1], n = edges.length;
+    let best = null;
+    const consider = (tau, info) => { if (!best || qcmp(tau, best.tau) < 0) best = { tau, ...info }; };
+    for (let j = 0; j < n; j++) {                // closed-segment contacts with earlier edges
+      const ev = edges[j].ev, den = vcross(v, ev); if (qsign(den) === 0) continue;
+      const w = vsub(verts[j], P), tau = norm(qdiv(vcross(w, ev), den)), sig = norm(qdiv(vcross(w, v), den));
+      if (qsign(tau) > 0 && qcmp(tau, Q1) <= 0 && qsign(sig) >= 0 && qcmp(sig, Q1) <= 0) consider(tau, { i: j, sig });
+    }
+    for (let j = 0; j < n; j++) {                // earlier vertices lying on the new edge (collinear abutment / overlap)
+      const w = vsub(verts[j], P); if (qsign(vcross(w, v)) !== 0 || qsign(vdot(w, v)) <= 0) continue;
+      const tau = norm(qdiv(vdot(w, v), vdot(v, v))); if (qcmp(tau, Q1) <= 0) consider(tau, { i: -1, sig: null });
+    }
+    if (best) {                                  // contact: keep the loop  X -> ... -> X
+      const X = vnorm(vadd(P, vscale(best.tau, v)));
+      let j0 = -1; for (let j = 0; j < n; j++) if (qeq(X[0], verts[j][0]) && qeq(X[1], verts[j][1])) { j0 = j; break; }
+      const loop = [], part = (Lq, f) => norm(qmul(Lq, f));
+      if (j0 >= 0) for (let j = j0; j < n; j++) loop.push({ k: edges[j].k, L: edges[j].L });
+      else {
+        const i = best.i;
+        loop.push({ k: edges[i].k, L: part(edges[i].L, norm(qsub(Q1, best.sig))) });
+        for (let j = i + 1; j < n; j++) loop.push({ k: edges[j].k, L: edges[j].L });
+      }
+      loop.push({ k, L: part(L, best.tau) });
+      return loop;
+    }
+    edges.push({ k, L, ev: v }); verts.push(vnorm(vadd(P, v))); prevK = k;
+  }
+  return null;
+}
+
+// Full denominator calculation: smallest integer m such that m·L = A + B√3 with A, B multiples of 4 for EVERY edge.
+function loopToSpecs(loop) {
+  let m = 1n;
+  for (const e of loop) {
+    const L = norm(e.L), need = (x) => (x === 0n ? 1n : (4n * L.n) / bgcd(4n * L.n, x < 0n ? -x : x));
+    m = lcm(m, lcm(need(L.a), need(L.b)));
+  }
+  let ok = true;
+  const specs = loop.map((e) => {
+    const L = norm(e.L);
+    if ((L.a * m) % L.n !== 0n || (L.b * m) % L.n !== 0n) ok = false;           // self-check
+    const A = (L.a * m) / L.n, B = (L.b * m) / L.n;
+    if (A % 4n !== 0n || B % 4n !== 0n) ok = false;                            // self-check
+    return { k: e.k, A, B };
+  });
+  return { specs, m, ok };
+}
+
+// WLOG: mirror to counter-clockwise, then rotate (multiples of 30°) so the first edge points along +x.
+function normalizeSpecs(specs) {
+  if (buildPolygon(specs, 1n).orient < 0) specs = specs.map((s) => ({ k: (12 - s.k) % 12, A: s.A, B: s.B }));
+  const k0 = specs[0].k;
+  return specs.map((s) => ({ k: (((s.k - k0) % 12) + 12) % 12, A: s.A, B: s.B }));
+}
+
+const hasStraightVertex = (P) => P.edges.some((ed, i) => qsign(vcross(ed.e, P.edges[(i + 1) % P.m].e)) === 0);
+
+// opts: { maxB, maxLen, minEdges, maxMs }  ->  { specs, m, edges, tries }  or  { error }
+function randomWalkPolygon(opts) {
+  const { maxB, maxLen, minEdges } = opts, t0 = Date.now(), maxMs = opts.maxMs || 1500;
+  if (!pickEdgeLength(maxB, maxLen)) return { error: "no admissible edge length: raise max length (or max |B|)" };
+  let tries = 0, rejected = { short: 0, check: 0 };
+  while (Date.now() - t0 < maxMs) {
+    tries++;
+    const loop = walkLoop(maxB, maxLen); if (!loop) continue;
+    if (loop.length < minEdges) { rejected.short++; continue; }
+    const { specs: raw, m, ok } = loopToSpecs(loop); if (!ok) { rejected.check++; continue; }
+    const specs = normalizeSpecs(raw), P = buildPolygon(specs, 1n);
+    if (!P.closed || !P.simple || P.orient <= 0 || P.m < minEdges || hasStraightVertex(P)) { rejected.check++; continue; }
+    return { specs, m, edges: P.m, tries };
+  }
+  return { error: "no polygon with at least " + minEdges + " edges found in " + (maxMs / 1000) + " s (" + tries + " walks): lower min edges or raise max length" };
+}
+
+// ============================================================================
+//  Exact billiard engine.  State at integer time n: position p and velocity v
+//  (displacement per unit time), both vectors over Q(√3).  A unit step flies
+//  along v; every wall crossing is located EXACTLY (fractions in Q(√3)) and the
+//  velocity is reflected with exact matrices (cos 2θ, sin 2θ ∈ {0,±1/2,±√3/2,±1}).
+// ============================================================================
+class Billiard {
+  constructor(poly, p0, v0) {
+    this.poly = poly; this.p0 = p0; this.v0 = v0; this.p = p0; this.v = v0;
+    this.n = 0; this.status = "run"; this.stop = null;
+    this.bounces = 0; this.passes = 0; this.lastFree = true;
+    this.T = null; this.Tbounces = 0;                              // exact period (first return to (p0, v0)), see step()
+    this.v0zero = qiszero(v0[0]) && qiszero(v0[1]);
+    this.maybeEscape = !poly.closed || poly.pointSide(p0) <= 0;   // can the ball leave the walls at all?
+  }
+
+  // Does the segment test hit edge ed for the ray p + τv ?  Returns null or {tn, den, sn, s} (τ = tn/den, σ = sn/den)
+  _hit(ed, p, v, rem) {
+    const den = qsub(qmul(v[0], ed.e[1]), qmul(v[1], ed.e[0]));
+    const s = qsign(den); if (s === 0) return null;                       // parallel: never crosses
+    const w0 = qsub(ed.A[0], p[0]), w1 = qsub(ed.A[1], p[1]);
+    const tn = qsub(qmul(w0, ed.e[1]), qmul(w1, ed.e[0]));
+    if (qsign(tn) * s <= 0) return null;                                   // τ <= 0  (also excludes the wall we just left)
+    const sn = qsub(qmul(w0, v[1]), qmul(w1, v[0]));
+    if (qsign(sn) * s < 0) return null;                                    // σ < 0
+    if (qsign(qsub(den, sn)) * s < 0) return null;                         // σ > 1
+    if (rem && qsign(qsub(qmul(rem, den), tn)) * s < 0) return null;       // τ > remaining time
+    return { tn, den, sn, s };
+  }
+
+  // Advance one unit of time.  Bounce points (floats, for plotting only) are appended to `path`.
+  step(path) {
+    const poly = this.poly, E = poly.edges, m = E.length, n = this.n;
+    let p = this.p, v = this.v, rem = Q1, events = 0;
+    for (let guard = 0; guard < 2000000; guard++) {
+      let hits = [];
+      for (let j = 0; j < m; j++) {
+        const h = this._hit(E[j], p, v, rem); if (!h) continue;
+        h.j = j;
+        if (hits.length === 0) { hits.push(h); continue; }
+        const b = hits[0];
+        const c = qsign(qsub(qmul(h.tn, b.den), qmul(b.tn, h.den))) * h.s * b.s;   // compare τ_h with τ_b exactly
+        if (c < 0) hits = [h]; else if (c === 0) hits.push(h);
+      }
+      // Exact period: this free-flight segment starts at p (exact time ta) with velocity v and lasts `dur`.  The state
+      // returns to (p0, v0) inside it iff v = v0 exactly and p0 = p + s·v with 0 <= s <= dur.  Every quantity is a ratio of
+      // parallel vectors, so T = ta + s lies in Q(√3): no other roots are ever needed.  The first return is the true period.
+      if (this.T === null && !this.v0zero && qeq(v[0], this.v0[0]) && qeq(v[1], this.v0[1])) {
+        const d = vsub(this.p0, p);
+        if (qiszero(vcross(d, v))) {                                              // p0 lies on the line of this segment
+          const s = norm(qdiv(vdot(d, v), vdot(v, v)));                           // p0 = p + s·v
+          const dur = hits.length ? norm(qdiv(hits[0].tn, hits[0].den)) : rem;    // time to the next wall hit / end of the unit step
+          const T = norm(qadd(norm(qsub(qint(n + 1), rem)), s));                  // exact start time of the segment + s
+          if (qsign(s) >= 0 && qcmp(s, dur) <= 0 && qsign(T) > 0) { this.T = T; this.Tbounces = this.bounces; }
+        }
+      }
+      if (hits.length === 0) { p = vnorm(vadd(p, vscale(rem, v))); break; }       // free flight to the end of the step
+
+      const h0 = hits[0];
+      const tau = qdiv(h0.tn, h0.den);
+      const P = vnorm(vadd(p, vscale(tau, v)));
+      const remNew = norm(qsub(rem, tau));
+      const tNow = n + 1 - qf(remNew);
+      let action = "stop", why = "";
+      if (hits.length === 1) {
+        const onEnd = qsign(h0.sn) === 0 || qsign(qsub(h0.den, h0.sn)) === 0;
+        if (onEnd) why = "end of a wall hit head-on (or ray along a wall line)"; else action = "reflect";
+      } else if (hits.length === 2 && poly.closed && poly.orient !== 0) {
+        const ja = hits[0].j, jb = hits[1].j;
+        const vtx = jb === (ja + 1) % m ? jb : (ja === (jb + 1) % m ? ja : -1);   // shared vertex of the two walls
+        if (vtx >= 0) {
+          const sm = poly.wedge(vtx, vneg(v)), sp = poly.wedge(vtx, v);
+          if (sm * sp === 1) action = "pass";                                      // grazes a vertex without crossing a wall
+          else why = "hit a vertex (vertex #" + vtx + ")";
+        } else why = "two walls hit at once";
+      } else if (hits.length === 2) why = "hit a vertex (polygon not closed, so inside/outside is undefined)";
+      else why = "several walls hit at one point";
+
+      if (action === "stop") {
+        this.p = P; this.v = v; this.status = "singular";
+        this.stop = { t: tNow, p: P, why };
+        path.x.push(qf(P[0])); path.y.push(qf(P[1])); path.t.push(tNow);
+        return;
+      }
+      events++; p = P; rem = remNew;
+      if (action === "reflect") {
+        const ed = E[h0.j];
+        v = [norm(qadd(qmul(ed.c, v[0]), qmul(ed.s, v[1]))), norm(qsub(qmul(ed.s, v[0]), qmul(ed.c, v[1])))];
+        this.bounces++;
+        path.x.push(qf(P[0])); path.y.push(qf(P[1])); path.t.push(tNow);
+      } else this.passes++;
+    }
+    this.p = p; this.v = v; this.n = n + 1; this.lastFree = events === 0;
+  }
+
+  // true when the infinite ray from (p, v) never meets a wall
+  rayEscapes() {
+    const p = this.p, v = this.v;
+    if (qiszero(v[0]) && qiszero(v[1])) return false;
+    for (const ed of this.poly.edges) if (this._hit(ed, p, v, null)) return false;
+    return true;
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  Simulation driver: records float data for plotting, exact states for the log,
+//  detects exact periodicity: T = first return to the initial state (position AND velocity) at any real
+//  time, found by Billiard.step; and the integer-time repeat N (first integer n with state(n) = state(0)),
+//  which exists only when T is rational.  The motion is invertible, so the first return is the true period.
+//  stopAtT: stop as soon as T is known (line mode needs nothing later); otherwise run to the integer-time
+//  repeat or to max t (points mode keeps sampling at integer times).
+// ---------------------------------------------------------------------------
+const EXACT_CAP = 20000;
+class Sim {
+  constructor(poly, p0, p1, maxT, stopAtT = false) {
+    this.poly = poly; this.maxT = maxT;
+    this.T = null; this.Tbounces = 0; this.stopAtT = stopAtT; this.stoppedAtT = false;
+    this.p0 = vnorm(p0); this.p1 = vnorm(p1); this.v0 = vnorm(vsub(p1, p0));
+    this.B = new Billiard(poly, this.p0, this.v0);
+    const f = vfloat(this.p0);
+    this.px = [f[0]]; this.py = [f[1]];                      // float position at each integer time
+    this.path = { x: [f[0]], y: [f[1]], t: [0] };            // every plotted vertex: bounce points + integer-time points
+    this.exact = [{ p: this.p0, v: this.v0 }];
+    this.done = false; this.reason = ""; this.period = 0; this.escape = null; this.ms = 0;
+    if (maxT <= 0) { this.done = true; this.reason = "max"; }
+  }
+  stepOnce() {
+    const B = this.B, path = this.path;
+    B.step(path);
+    if (B.status === "singular") { this.done = true; this.reason = "singular"; return; }
+    if (this.T === null && B.T !== null) { this.T = B.T; this.Tbounces = B.Tbounces; }
+    const f = vfloat(B.p);
+    this.px.push(f[0]); this.py.push(f[1]); path.x.push(f[0]); path.y.push(f[1]); path.t.push(B.n);
+    if (this.exact.length < EXACT_CAP) this.exact.push({ p: B.p, v: B.v });
+    if (qeq(B.p[0], B.p0[0]) && qeq(B.p[1], B.p0[1]) && qeq(B.v[0], B.v0[0]) && qeq(B.v[1], B.v0[1])) {
+      this.done = true; this.reason = "periodic"; this.period = B.n; return;
+    }
+    if (this.stopAtT && this.T !== null) { this.done = true; this.reason = "periodic"; this.stoppedAtT = B.n < this.maxT; return; }
+    if (B.n >= this.maxT) { this.done = true; this.reason = "max"; return; }
+    if (B.maybeEscape && B.lastFree && B.rayEscapes()) {
+      this.done = true; this.reason = "escape"; this.escape = { n: B.n, p: f, v: vfloat(B.v) };
+    }
+  }
+  advance(ms) {
+    const t0 = performance.now(); let k = 0;
+    while (!this.done) { this.stepOnce(); if ((++k & 7) === 0 && performance.now() - t0 > ms) break; }
+    this.ms += performance.now() - t0;
+  }
+  get steps() { return this.B.n; }
+}
+
+if (typeof module !== "undefined") module.exports = { Q, mk, norm, qint, qadd, qsub, qmul, qdiv, qsign, qcmp, qeq, qf, fmtQ, fmtV, vfloat, vnorm, vsub,
+  buildPolygon, CAIRO_SPECS, SHAPES, randomWalkPolygon, randomBallPoint, walkLoop, loopToSpecs, normalizeSpecs, pickEdgeLength, rnd, ballVec,
+  Billiard, Sim, SQ3, parseBig, qiszero, COS30, SIN30, Q0, Q1, vadd, vcross, vdot, vscale, bgcd, segInter };
+
+// ============================================================================
+//  UI: inputs, validation, info panels, randomisers
+// ============================================================================
+const $ = (id) => document.getElementById(id);
+const specsToState = (specs) => specs.map((s) => ({ k: String(s.k), A: String(s.A), B: String(s.B) }));
+const state = { edges: specsToState(SHAPES[0].specs) };
+const PT = { p0: ["p0Ax", "p0Bx", "p0Ay", "p0By"], p1: ["p1Ax", "p1Bx", "p1Ay", "p1By"] };
+const view = { poly: null, sim: null, cfg: null, P0: null, P1: null };
+let runId = 0, debounceTimer = 0;
+
+const DIR_OPTIONS = Array.from({ length: 12 }, (_, k) => `<option value="${k}">${k * 30}°</option>`).join("");
+const fix3 = (x) => (isFinite(x) ? x.toFixed(3) : "—");
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+function mark(el, kind, msg) {                 // kind: "" | "bad" | "warn"
+  el.classList.toggle("bad", kind === "bad"); el.classList.toggle("warn", kind === "warn");
+  el.title = kind ? msg : "";
+}
+function markMult(el, mult, what) {
+  const v = parseBig(el.value);
+  if (v === null) { mark(el, "bad", "must be an integer"); return null; }
+  mark(el, v % mult === 0n ? "" : "warn", what + " should be divisible by " + mult + " (still computed exactly in Q(√3), but denominators may appear)");
+  return v;
+}
+
+// ---- shape menu: the presets, plus a "custom" entry that is shown after Randomize or any manual edit ----
+function buildShapeMenu() {
+  $("shape").innerHTML = SHAPES.map((s, i) => `<option value="${i}">${s.name}</option>`).join("") + `<option value="custom" disabled hidden>custom</option>`;
+  $("shape").value = "0";
+}
+const setShapeCustom = () => { $("shape").value = "custom"; };
+function loadShape(i) {
+  state.edges = specsToState(SHAPES[i].specs); renderEdges();
+  $("genNote").textContent = "";
+  randomizeBall();                             // the old ball positions mean nothing in a new shape
+  run();
+}
+function polyEdited() {                        // the user changed the edge table by hand
+  setShapeCustom(); $("genNote").textContent = ""; userEdited();
+}
+
+function renderEdges() {
+  const body = $("edgeBody"); body.innerHTML = "";
+  state.edges.forEach((ed, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td class="idx">${i + 1}</td><td><select>${DIR_OPTIONS}</select></td>
+      <td><input class="num" inputmode="numeric"></td><td><input class="num" inputmode="numeric"></td>
+      <td class="len"></td><td><button class="mini" title="remove edge">×</button></td>`;
+    const sel = tr.querySelector("select"), [ia, ib] = tr.querySelectorAll("input"), len = tr.querySelector(".len");
+    sel.value = ed.k; ia.value = ed.A; ib.value = ed.B;
+    const upd = () => {
+      const A = markMult(ia, 4n, "A"), B = markMult(ib, 4n, "B");
+      len.textContent = A !== null && B !== null ? fix3(Number(A) + Number(B) * SQ3) : "";
+    };
+    sel.onchange = () => { ed.k = sel.value; polyEdited(); };
+    ia.oninput = () => { ed.A = ia.value; upd(); polyEdited(); };
+    ib.oninput = () => { ed.B = ib.value; upd(); polyEdited(); };
+    tr.querySelector("button").onclick = () => { state.edges.splice(i, 1); renderEdges(); polyEdited(); };
+    upd(); body.appendChild(tr);
+  });
+}
+
+function readPoint(which) {
+  const ids = PT[which], v = ids.map((id) => parseBig($(id).value));
+  ids.forEach((id, i) => { const el = $(id); if (v[i] === null) mark(el, "bad", "must be an integer"); else mark(el, v[i] % 2n === 0n ? "" : "warn", "should be even so the point lies in 2·Z[√3]"); });
+  return v.some((x) => x === null) ? null : { Ax: v[0], Bx: v[1], Ay: v[2], By: v[3] };
+}
+function setPoint(which, pt) { const ids = PT[which], v = [pt.Ax, pt.Bx, pt.Ay, pt.By]; ids.forEach((id, i) => { $(id).value = String(v[i]); }); }
+
+function posInt(id, hi) {
+  const el = $(id), v = parseBig(el.value), ok = v !== null && v >= 1n && (hi === undefined || v <= hi);
+  mark(el, ok ? "" : "bad", hi !== undefined ? "positive integer, at most " + hi : "positive integer");
+  return ok ? v : null;
+}
+
+// Parse everything (also marks invalid fields red).  Returns {ok:false, errs} or {ok:true, ...config}.
+// The plot step is not part of this: it only affects drawing and the list, never the simulation.
+function readAll() {
+  const errs = [];
+  const S = posInt("polyScale"), Sb = posInt("ballScale"), maxT = posInt("maxT", 2000000n);
+  if (S === null) errs.push("polygon scale must be a positive integer");
+  if (Sb === null) errs.push("ball scale must be a positive integer");
+  if (maxT === null) errs.push("max t must be an integer from 1 to 2,000,000");
+  const specs = [];
+  state.edges.forEach((ed, i) => {
+    const A = parseBig(ed.A), B = parseBig(ed.B);
+    if (A === null || B === null) errs.push("edge " + (i + 1) + ": A and B must be integers"); else specs.push({ k: +ed.k, A, B });
+  });
+  const p0 = readPoint("p0"), p1 = readPoint("p1");
+  if (!p0 || !p1) errs.push("ball coordinates must be integers");
+  if (errs.length) return { ok: false, errs };
+  return { ok: true, S, Sb, maxT: Number(maxT), specs, p0, p1 };
+}
+
+function currentPoly() {
+  const S = parseBig($("polyScale").value);
+  if (S === null || S < 1n) return null;
+  const specs = [];
+  for (const ed of state.edges) { const A = parseBig(ed.A), B = parseBig(ed.B); if (A === null || B === null) return null; specs.push({ k: +ed.k, A, B }); }
+  return buildPolygon(specs, S);
+}
+
+// ---- info panels ----
+function sideText(s, closed) {
+  if (!closed) return "<span class='wn'>path is open – inside/outside undefined</span>";
+  return s === 1 ? "<span class='ok'>inside ✓</span>" : s === 0 ? "<span class='wn'>on a wall</span>" : "<span class='er'>outside the polygon</span>";
+}
+function renderPolyInfo(poly) {
+  const L = [];
+  if (poly.m === 0) L.push("<div class='er'>no edges – no walls</div>");
+  else if (poly.closed) {
+    const area = norm(qmul(poly.area2, HALF));
+    L.push(`<div class='ok'>✓ closed, ${poly.m} edges, ${poly.orient > 0 ? "counter-clockwise" : poly.orient < 0 ? "clockwise" : "zero area"}</div>`);
+    L.push(`<div>area = ${esc(fmtQ(qsign(area) < 0 ? qneg(area) : area))} ≈ ${fix3(Math.abs(qf(area)))}</div>`);
+  } else L.push(`<div class='wn'>✗ path is open: end point is ${esc(fmtV(poly.gap))} from the start (dashed line). Walls are only the ${poly.m} edges entered; the ball may escape.</div>`);
+  if (poly.m >= 2) L.push(poly.simple ? "<div class='ok'>✓ simple (no crossings)</div>" : "<div class='wn'>edges cross or touch (not simple) – still simulated; crossing points count as singular hits</div>");
+  const odd = state.edges.filter((e) => { const A = parseBig(e.A), B = parseBig(e.B); return A !== null && B !== null && (A % 4n !== 0n || B % 4n !== 0n); }).length;
+  L.push(odd ? `<div class='wn'>${odd} edge(s) not in 4·Z[√3] – still exact, but integer-time positions may need denominators</div>` : "<div class='ok'>✓ all edge lengths in 4·Z[√3], vertices in 2·Z[√3]</div>");
+  $("polyInfo").innerHTML = L.join("");
+  $("vertLog").textContent = poly.verts.map((v, i) => i + ": " + fmtV(v)).join("\n");
+}
+function renderBallInfo(poly, P0, P1) {
+  const v = vsub(P1, P0), vf = vfloat(v), L = [];
+  L.push(`<div>t=0: ${sideText(poly.pointSide(P0), poly.closed)} &nbsp; t=1: ${sideText(poly.pointSide(P1), poly.closed)}</div>`);
+  L.push(`<div>velocity v = (${esc(fmtQ(norm(v[0])))}, ${esc(fmtQ(norm(v[1])))}) , |v| ≈ ${fix3(Math.hypot(vf[0], vf[1]))}</div>`);
+  if (qiszero(v[0]) && qiszero(v[1])) L.push("<div class='wn'>the two points coincide: the ball does not move</div>");
+  $("ballInfo").innerHTML = L.join("");
+}
+
+// ---- randomisers ----
+const samePt = (a, b) => a.Ax === b.Ax && a.Bx === b.Bx && a.Ay === b.Ay && a.By === b.By;
+const setBallNote = (txt) => { $("ballNote").innerHTML = txt ? "<span class='er'>" + esc(txt) + "</span>" : ""; };
+const setGenNote = (txt, err) => { $("genNote").innerHTML = err ? "<span class='er'>" + esc(txt) + "</span>" : esc(txt); };
+
+function intField(id, lo, hi, what) {          // integer in [lo, hi] -> Number, or null (field marked red)
+  const el = $(id), v = parseBig(el.value), ok = v !== null && v >= BigInt(lo) && v <= BigInt(hi);
+  mark(el, ok ? "" : "bad", what + ": integer from " + lo + " to " + hi);
+  return ok ? Number(v) : null;
+}
+
+// Ball randomiser: B first (even, |B| <= max |B|), then A uniform among all even A that keep A + B√3 in the bounding box
+// (divided by the ball scale).  The ball scale is never changed here: it is the user's input.
+function randomizeBall() {
+  const poly = currentPoly();
+  if (!poly) { setBallNote("the polygon is not valid yet, so no ball position was chosen"); return false; }
+  const maxB = intField("ballMaxB", 0, 100000000, "ball max |B|");
+  if (maxB === null) { setBallNote("ball max |B| must be an integer from 0 to 100,000,000"); return false; }
+  const Sb = posInt("ballScale");
+  if (Sb === null) { setBallNote("ball scale must be a positive integer"); return false; }
+  for (let i = 0; i < 60; i++) {
+    const a = randomBallPoint(poly, Sb, maxB), b = randomBallPoint(poly, Sb, maxB);
+    if (a && b && !samePt(a, b)) { setBallNote(""); setPoint("p0", a); setPoint("p1", b); return true; }
+  }
+  setBallNote("no two distinct interior points found at ball scale " + Sb + ": lower the scale or raise max |B|");
+  return false;
+}
+
+// Polygon randomiser: random walk until it touches itself, keep the loop (see randomWalkPolygon).
+function randomizePolygon() {
+  const maxB = intField("rpMaxB", 0, 1000000, "max |B|"), maxLen = intField("rpMaxLen", 1, 1000000, "max length"),
+        minEdges = intField("rpMinEdges", 3, 60, "min edges");
+  if (maxB === null || maxLen === null || minEdges === null) { setGenNote("fix the red fields", true); return false; }
+  const r = randomWalkPolygon({ maxB, maxLen, minEdges, maxMs: 1500 });
+  if (r.error) { setGenNote(r.error, true); return false; }
+  state.edges = specsToState(r.specs); renderEdges(); setShapeCustom();
+  setGenNote("random polygon: " + r.edges + " edges; all lengths scaled up by the common factor ×" + r.m + " to clear denominators; " + r.tries + " walk(s) tried.");
+  return true;
+}
+
+function userEdited() { setBallNote(""); schedule(); }          // any hand edit: drop stale messages, re-run shortly
+function onFieldEdit() { readAll(); userEdited(); }             // mark invalid fields right away; the run itself is debounced
+function schedule() { clearTimeout(debounceTimer); debounceTimer = setTimeout(run, 180); }
+
+// ============================================================================
+//  Run loop (time-sliced so the page stays responsive) and result reporting
+// ============================================================================
+const getStep = () => { const v = parseBig($("stepT").value); return v !== null && v >= 1n ? Number(v) : 1; };   // invalid -> 1
+
+function run() {
+  clearTimeout(debounceTimer);
+  const id = ++runId;                          // stops any earlier run, also when the new input turns out to be invalid
+  const cfg = readAll();
+  if (!cfg.ok) { $("status").innerHTML = cfg.errs.map((e) => `<div class="er">${esc(e)}</div>`).join(""); return; }
+  const poly = buildPolygon(cfg.specs, cfg.S);
+  const P0 = ballVec(cfg.p0, cfg.Sb), P1 = ballVec(cfg.p1, cfg.Sb);
+  Object.assign(view, { poly, cfg, P0, P1 });
+  renderPolyInfo(poly); renderBallInfo(poly, P0, P1);
+  const sim = new Sim(poly, P0, P1, cfg.maxT, $("mode").value === "line"); view.sim = sim;   // line mode needs nothing after the period T
+  $("log").textContent = "";
+  let lastDraw = 0, drawCost = 0;
+  const tick = () => {
+    if (id !== runId) return;
+    sim.advance(25);
+    if (sim.done) { draw(); finish(); return; }
+    $("status").textContent = `computing… t = ${sim.steps} / ${cfg.maxT}`;
+    const now = performance.now();
+    if (sim.path.x.length < 30000 && now - lastDraw > Math.max(250, drawCost * 8)) {   // progressive drawing only while cheap
+      draw(); lastDraw = performance.now(); drawCost = lastDraw - now;
+    }
+    setTimeout(tick, 0);
+  };
+  draw(); tick();
+}
+
+function isImagePoint(sim) {                   // true: real t=1 position differs from the input t=1 point
+  if (sim.exact.length < 2) return true;
+  const r = sim.exact[1].p;
+  return !(qeq(r[0], sim.p1[0]) && qeq(r[1], sim.p1[1]));
+}
+
+function periodMessage(sim) {
+  const T = sim.T, L = [];
+  L.push(`<div><b class="ok">Exactly periodic.</b> The state (position and velocity) first returns to its initial value at T = ${esc(fmtQ(T))} ≈ ${qf(T).toFixed(6)}, after ${sim.Tbounces} bounce(s) per period.</div>`);
+  if (T.b !== 0n) L.push("<div>T is irrational, so the integer-time points never repeat exactly; they keep filling the same closed curve.</div>");
+  else if (T.n === 1n) L.push(`<div>T is an integer: the integer-time points repeat every ${T.a} time unit(s).</div>`);
+  else L.push(`<div>The integer-time points repeat every ${T.a} time units (${T.a} = ${T.n}·T).</div>`);
+  if (sim.stoppedAtT) L.push("<div>Line mode: the simulation stopped at T. Choose a points mode to sample later times.</div>");
+  return L.join("");
+}
+
+function finish() {
+  const { sim, cfg } = view, B = sim.B, L = [];
+  if (sim.reason === "singular") L.push(`<div><b class="wn">Singular trajectory</b> at t ≈ ${B.stop.t.toFixed(4)}: ${esc(B.stop.why)}.<br>Exact point: ${esc(fmtV(B.stop.p))}.<br>The simulation ends there.</div>`);
+  else if (sim.reason === "escape") L.push(`<div><b class="wn">Ball escapes</b> through the open path: no wall is hit after t = ${sim.escape.n}.</div>`);
+  else if (sim.T) L.push(periodMessage(sim));
+  else if (sim.reason === "periodic") L.push("<div>The ball does not move: both points coincide, so it stays at its initial position.</div>");
+  else L.push(`<div>Simulated t = 0 … ${cfg.maxT}; no return to the initial state within t ≤ ${cfg.maxT}.</div>`);
+  L.push(`<div>${B.bounces} bounce(s)${B.passes ? ", " + B.passes + " vertex pass-through(s)" : ""} · ${sim.steps} time step(s) computed · ${sim.ms.toFixed(0)} ms</div>`);
+  if (sim.exact.length > 1) {
+    if (isImagePoint(sim)) {
+      const k = sim.path.t.filter((t) => t > 0 && t < 1).length;
+      L.push(`<div>t=1 input is an <b>image point</b>: the ball actually reaches ${esc(fmtV(sim.exact[1].p))} after ${k} bounce(s) during 0<t<1.</div>`);
+    } else L.push("<div>t=1 position equals the input point (nothing between the two points).</div>");
+  } else if (sim.reason === "singular") L.push("<div>The ball is destroyed by a vertex hit before t=1.</div>");
+  $("status").innerHTML = L.join("");
+  updateLog();
+}
+
+function updateLog() {
+  const { sim, cfg } = view; if (!sim || !sim.done) return;
+  const step = getStep(), out = [], CAP = 400;
+  if (isImagePoint(sim)) out.push("input t=1 point (image): " + fmtV(sim.p1));
+  let t = 0, shown = 0;
+  for (; t <= cfg.maxT && shown < CAP; t += step) {
+    const idx = sim.period ? t % sim.period : t;
+    if (sim.reason === "singular" && t > sim.steps) { out.push("… trajectory ends at t ≈ " + sim.B.stop.t.toFixed(4)); break; }
+    if (sim.reason === "escape" && t > sim.escape.n) { out.push("… escaped: straight line from here on"); break; }
+    if (sim.stoppedAtT && t > sim.steps) { out.push("… line mode stopped the simulation at the period T; choose a points mode to list later times"); break; }
+    if (idx >= sim.exact.length) { out.push("… (exact state cache is limited to the first " + EXACT_CAP + " steps)"); break; }
+    const s = sim.exact[idx];
+    out.push("t=" + t + "   p=" + fmtV(s.p) + "   v=" + fmtV(s.v)); shown++;
+  }
+  if (shown >= CAP && t <= cfg.maxT) out.push("… (list truncated)");
+  $("log").textContent = out.join("\n");
+}
+
+function plotChanged() {                       // the step box: affects only the points and the list, never the simulation
+  const ok = posInt("stepT") !== null;
+  $("stepNote").textContent = ok ? "" : "step must be a positive integer (1 is used until it is fixed)";
+  updateLog(); draw();
+}
+
+// ============================================================================
+//  Canvas drawing.  The view always fits the polygon's bounding box to the canvas.
+// ============================================================================
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let tf = null;                                   // current view transform (for the mouse read-out)
+
+function draw() {
+  const cv = $("cv"), dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+  const poly = view.poly; if (!poly || W < 20 || H < 20) return;
+
+  const [x0, y0, x1, y1] = poly.bbox, mg = 34;
+  const dx = Math.max(x1 - x0, 1e-9), dy = Math.max(y1 - y0, 1e-9);
+  const sc = Math.min((W - 2 * mg) / dx, (H - 2 * mg) / dy), ox = (W - dx * sc) / 2, oy = (H - dy * sc) / 2;
+  const X = (x) => ox + (x - x0) * sc, Y = (y) => oy + (y1 - y) * sc;
+  tf = { x0, y1, sc, ox, oy };
+  const dark = cssVar("--dark") === "1", ink = cssVar("--poly-stroke");
+
+  // polygon
+  ctx.beginPath();
+  poly.vf.forEach(([x, y], i) => (i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
+  if (poly.closed) { ctx.closePath(); ctx.fillStyle = cssVar("--poly-fill"); ctx.fill("evenodd"); }
+  ctx.strokeStyle = ink; ctx.lineWidth = 2.2; ctx.lineJoin = "round"; ctx.stroke();
+  if (!poly.closed && poly.m > 0) {              // show the missing closing segment
+    const last = poly.vf[poly.vf.length - 1], first = poly.vf[0];
+    ctx.save(); ctx.setLineDash([6, 5]); ctx.globalAlpha = 0.55; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(X(last[0]), Y(last[1])); ctx.lineTo(X(first[0]), Y(first[1])); ctx.stroke(); ctx.restore();
+  }
+  ctx.fillStyle = ink;
+  for (const [x, y] of poly.vf) { ctx.beginPath(); ctx.arc(X(x), Y(y), 2.6, 0, 6.2832); ctx.fill(); }
+
+  const sim = view.sim; if (!sim) return;
+  const mode = $("mode").value, cfg = view.cfg, step = getStep();
+  const lastT = sim.path.t[sim.path.t.length - 1];
+  // Colour = position along the orbit.  Periodic orbit (exact period T known): the phase t/T within the period, so line and
+  // points agree; otherwise time as a fraction of the simulated range.
+  const Tf = sim.T ? qf(sim.T) : 0;
+  const Tc = sim.reason === "escape" ? cfg.maxT : sim.done ? Math.max(1, lastT) : cfg.maxT;
+  const phase = (t) => (Tf ? (t - Math.floor(t / Tf) * Tf) / Tf : t / Tc);
+  const phaseLine = (t) => (Tf ? Math.min(0.999999, t / Tf) : t / Tc);          // the line covers 0..T: the end of the period is not phase 0
+  const col = (f) => `hsl(${(205 + 150 * Math.min(1, Math.max(0, f))).toFixed(0)} 82% ${dark ? 64 : 42}%)`;
+
+  if (mode !== "points") drawLine(ctx, X, Y, sim, cfg, phaseLine, col, mode === "both" ? 0.55 : 0.9);
+  if (mode !== "line") drawPoints(ctx, X, Y, sim, cfg, step, phase, col);
+
+  // markers
+  const lab = (txt, x, y, color) => { ctx.fillStyle = color; ctx.font = "600 12px ui-sans-serif,system-ui,sans-serif"; ctx.fillText(txt, x + 8, y - 7); };
+  const f0 = [sim.px[0], sim.py[0]], p1f = vfloat(sim.p1);
+  const c0 = cssVar("--p0"), c1 = cssVar("--p1");
+  const image = isImagePoint(sim);
+  if (image) {                                   // input t=1 point is only an image: show the unfolded velocity vector
+    ctx.save(); ctx.setLineDash([3, 4]); ctx.strokeStyle = c1; ctx.globalAlpha = 0.6; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(X(f0[0]), Y(f0[1])); ctx.lineTo(X(p1f[0]), Y(p1f[1])); ctx.stroke(); ctx.restore();
+    ctx.beginPath(); ctx.arc(X(p1f[0]), Y(p1f[1]), 4.5, 0, 6.2832); ctx.lineWidth = 2; ctx.strokeStyle = c1; ctx.stroke();
+    lab("1′", X(p1f[0]), Y(p1f[1]), c1);
+  }
+  if (sim.px.length > 1) { ctx.beginPath(); ctx.arc(X(sim.px[1]), Y(sim.py[1]), 4.5, 0, 6.2832); ctx.fillStyle = c1; ctx.fill(); lab("1", X(sim.px[1]), Y(sim.py[1]), c1); }
+  ctx.beginPath(); ctx.arc(X(f0[0]), Y(f0[1]), 5.5, 0, 6.2832); ctx.fillStyle = c0; ctx.fill();
+  ctx.lineWidth = 1.5; ctx.strokeStyle = cssVar("--canvas"); ctx.stroke(); lab("0", X(f0[0]), Y(f0[1]), c0);
+  if (sim.reason === "singular") {
+    const sp = vfloat(sim.B.stop.p), sx = X(sp[0]), sy = Y(sp[1]);
+    ctx.strokeStyle = cssVar("--stop"); ctx.lineWidth = 3; ctx.beginPath();
+    ctx.moveTo(sx - 6, sy - 6); ctx.lineTo(sx + 6, sy + 6); ctx.moveTo(sx + 6, sy - 6); ctx.lineTo(sx - 6, sy + 6); ctx.stroke();
+  }
+}
+
+function drawLine(ctx, X, Y, sim, cfg, phase, col, alpha) {
+  const P = sim.path; let n = P.x.length; if (n < 2) return;
+  const closed = !!sim.T;
+  if (closed) {                                  // exactly one period: stop at the last vertex with t <= T, then close to the start point
+    const Tf = qf(sim.T); let lo = 0, hi = n;    // first index with t > T (path times are non-decreasing)
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (P.t[mid] <= Tf) lo = mid + 1; else hi = mid; }
+    n = Math.max(lo, 1);
+  }
+  const NB = Math.min(60, Math.max(1, n >> 1));
+  ctx.save(); ctx.globalAlpha = alpha; ctx.lineWidth = 1.25; ctx.lineJoin = "bevel";
+  let b = -1, cnt = 0;                           // short sub-paths: one huge self-overlapping path is very slow to rasterise
+  for (let i = 1; i < n; i++) {
+    const nb = Math.min(NB - 1, Math.floor(phase(P.t[i]) * NB));
+    if (nb !== b || cnt >= 200) {
+      if (b >= 0) ctx.stroke();
+      ctx.beginPath(); if (nb !== b) ctx.strokeStyle = col((nb + 0.5) / NB);
+      ctx.moveTo(X(P.x[i - 1]), Y(P.y[i - 1])); b = nb; cnt = 0;
+    }
+    ctx.lineTo(X(P.x[i]), Y(P.y[i])); cnt++;
+  }
+  if (closed) {                                  // the last flight of the period ends exactly at the start point
+    if (b < 0) { ctx.beginPath(); ctx.strokeStyle = col(0.5 / NB); ctx.moveTo(X(P.x[n - 1]), Y(P.y[n - 1])); }
+    ctx.lineTo(X(sim.px[0]), Y(sim.py[0]));
+  }
+  if (sim.escape) { const e = sim.escape, k = cfg.maxT - e.n; ctx.lineTo(X(e.p[0] + k * e.v[0]), Y(e.p[1] + k * e.v[1])); }
+  ctx.stroke(); ctx.restore();
+}
+
+function drawPoints(ctx, X, Y, sim, cfg, step, phase, col) {
+  const per = sim.period, total = Math.floor(cfg.maxT / step) + 1;
+  const lim = per ? Math.min(total, per + 1) : total;          // a periodic orbit has at most `period` distinct points
+  const r = lim > 60000 ? 0.9 : lim > 6000 ? 1.5 : 2.5;
+  const NB = 60; let b = -1;
+  for (let i = 0; i < lim; i++) {
+    const t = i * step, idx = per ? t % per : t; let x, y;
+    if (sim.escape && t > sim.escape.n) { const e = sim.escape; x = e.p[0] + (t - e.n) * e.v[0]; y = e.p[1] + (t - e.n) * e.v[1]; }
+    else { if (idx >= sim.px.length) break; x = sim.px[idx]; y = sim.py[idx]; }
+    const nb = Math.min(NB - 1, Math.floor(phase(t) * NB));
+    if (nb !== b) { ctx.fillStyle = col((nb + 0.5) / NB); b = nb; }
+    if (r < 2) ctx.fillRect(X(x) - r, Y(y) - r, 2 * r, 2 * r);
+    else { ctx.beginPath(); ctx.arc(X(x), Y(y), r, 0, 6.2832); ctx.fill(); }
+  }
+}
+
+// ============================================================================
+//  Wiring
+// ============================================================================
+function init() {
+  buildShapeMenu(); renderEdges();
+  $("shape").onchange = () => loadShape(+$("shape").value);
+  $("btnPolyRand").onclick = () => { if (randomizePolygon()) { randomizeBall(); run(); } };
+  $("btnBallRand").onclick = () => { randomizeBall(); run(); };
+  for (const id of ["rpMaxB", "rpMaxLen", "rpMinEdges"]) $(id).oninput = () => { $(id).classList.remove("bad"); setGenNote(""); };
+  $("ballMaxB").oninput = () => { $("ballMaxB").classList.remove("bad"); setBallNote(""); };
+  $("btnAddEdge").onclick = () => { state.edges.push({ k: "0", A: "4", B: "0" }); renderEdges(); polyEdited(); };
+  for (const id of ["polyScale", "ballScale", "maxT", ...PT.p0, ...PT.p1]) $(id).oninput = onFieldEdit;
+  $("stepT").oninput = plotChanged;
+  $("mode").onchange = () => {                   // a line-mode run stops at T; points need the later times, so run again
+    if (view.sim && view.sim.stoppedAtT && $("mode").value !== "line") run(); else draw();
+  };
+  new ResizeObserver(draw).observe($("cv"));
+  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", draw);
+  $("cv").addEventListener("mousemove", (ev) => {
+    if (!tf) return;
+    const r = $("cv").getBoundingClientRect();
+    const x = tf.x0 + (ev.clientX - r.left - tf.ox) / tf.sc, y = tf.y1 - (ev.clientY - r.top - tf.oy) / tf.sc;
+    $("hud").textContent = "x = " + x.toFixed(3) + "   y = " + y.toFixed(3);
+  });
+  $("cv").addEventListener("mouseleave", () => { $("hud").textContent = ""; });
+  randomizeBall();                               // no stored default ball: every start is a fresh random state
+  run();
+}
+init();
+</script>
+</body>
+</html>
